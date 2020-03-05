@@ -1,4 +1,5 @@
 #version 430 core
+#define DISPLAY 1
 
 // ***** FRAGMENT SHADER INPUT *****
 layout(location=0) in vec3 pos;
@@ -18,11 +19,11 @@ struct NodeType {
 };
 
 // ***** FRAGMENT SHADER BUFFERS *****
-layout(std430, binding=3) buffer Hash {
+layout(std430, binding=4) buffer Hash {
     uint hashMap[];
 };
 
-layout(std430, binding=4) buffer LinkedList {
+layout(std430, binding=5) buffer LinkedList {
     NodeType nodes[];
 };
 
@@ -53,6 +54,13 @@ int spacialHash(float x, float y, float z){
 }
 
 void main() {
+    #if !DISPLAY
+        vec4 color;
+    #endif
+
+    // Set color
+    color = vec4(1.0, 1.0, 1.0, 0.0);
+
     // Calculate hash
     int hashIdx = spacialHash(pos.x, pos.y, pos.z);
     // Get the index of the next empty slot in the buffer
@@ -64,11 +72,17 @@ void main() {
         uint previousHeadIdx = atomicExchange(hashMap[hashIdx], nodeIdx);
 
         // Set linked list data appropriately
-        nodes[nodeIdx].nextNodeIndex = previousHeadIdx;
-        nodes[nodeIdx].particleIndex = index;
-    }
-    color = vec4(1.0, 1.0, 1.0, 1.0);
-    if(index == 1128202240){
+        //nodes[nodeIdx].nextNodeIndex = previousHeadIdx;
+        atomicExchange(nodes[nodeIdx].nextNodeIndex, previousHeadIdx);
+        //nodes[nodeIdx].particleIndex = index;
+        atomicExchange(nodes[nodeIdx].particleIndex, index);
+
+        if(previousHeadIdx == 0xffffffff){
+            //color = vec4(0.0,0.0,1.0,1.0);
+        }
+    }else{
+        // HERE LIES DRAGONS, VERY FIERCE ONES
+        // THIS SHOULD NEVER HAPPEN AND IF IT DOES THINGS WILL BREAK, LOTS OF THINGS!!!!!!
         color = vec4(1.0,0.0,0.0,1.0);
     }
 }

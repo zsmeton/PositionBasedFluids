@@ -5,8 +5,6 @@ Zachary Smeton
 todo
 
 ### TODOS
-- Implement basic spacial hashing
-- Add history data to hashmap or use clearing buffer
 - Implement basic position based fluid dynamics
 - Implement Hardware instancing of spheres to fluid particles
 - Implement signed distance field render pass
@@ -16,3 +14,6 @@ todo
 - Implement coloring of spheres to look more like water
     - foaming
     - some transparency
+
+#### NITTY GRITTY TODOS
+- Create struct to store block binding locations

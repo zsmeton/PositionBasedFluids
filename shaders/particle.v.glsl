@@ -1,8 +1,8 @@
 #version 430 core
 
 // ***** VERTEX SHADER INPUT *****
-layout(location=0) in vec3 vPos;
-layout(location=1) in vec3 color;
+layout(location=0) in vec4 vPos;
+layout(location=1) in vec4 color;
 
 
 // ***** VERTEX SHADER OUTPUT *****
@@ -25,9 +25,10 @@ layout(shared, binding = 0) uniform Matricies{
 
 
 void main() {
-    vec4 posVec = mtx.modelView * vec4(vPos,1.0);
+    vec4 posVec = mtx.modelView * vec4(vPos.xyz,1.0);
     // Calculate position
     gl_Position = mtx.projection * posVec;
+
     // pass color down
-    fColor = color;
+    fColor = color.xyz;
 }
