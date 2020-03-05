@@ -36,6 +36,8 @@
 #include "include/MaterialReader.h"
 #include "include/ShaderProgram4.hpp"
 
+#define DEBUG 0
+
 //*************************************************************************************
 
 // Structure definitions
@@ -86,8 +88,8 @@ const float LIGHT_SIZE = 6.0f;
 // Simulation timing
 double lastTime;
 // Fluid Dynamics
-const uint MAX_PARTICLES = 1000;
-const uint HASH_MAP_SIZE = 1000;
+const uint MAX_PARTICLES = 10000;
+const uint HASH_MAP_SIZE = 20000;
 const float SUPPORT_RADIUS = 2.0;
 const int WORK_GROUP_SIZE = 1000;
 uint timestamp = 1;
@@ -114,8 +116,6 @@ CSCI444::ShaderProgram *neighborColorProgram = NULL;
 const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2;
 GLuint vaods[3];
 GLuint lightVbod;
-GLuint rbo;
-GLuint fbo;
 
 
 // Subroutines
@@ -514,7 +514,6 @@ void setupBuffers() {
     glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
     glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Light"), lightUniformBuffer.blockBinding );
 
-
     // Material Buffer
     glGenBuffers(1, &materialUniformBuffer.handle);
     glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
@@ -705,18 +704,6 @@ void setupBuffers() {
     glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*)(3 * sizeof(float)) );
 
     //------------  END  GROUND VAO------------
-
-    //----------- START NULL FBO ---------
-    /*
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glGenRenderbuffers(1, &rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA4, windowWidth, windowHeight);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-     */
-    //----------- END NULL FBO ----------
 }
 
 void setupFonts() {
@@ -795,6 +782,55 @@ void setupFonts() {
 	glVertexAttribPointer(textShaderAttribLocs.text_texCoord_location, 4, GL_FLOAT, GL_FALSE, 0, (void*)0);
 }
 
+void debugSpacialHash(){
+   glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
+   GLint bufMask = GL_MAP_READ_BIT;
+   HashType* hash = (HashType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType)*HASH_MAP_SIZE, bufMask );
+   int h = 0;
+   for( int i = 0; i < HASH_MAP_SIZE; i++ ) {
+       hashMap[i] = hash[i];
+       if(hashMap[i].headNodeIndex != 0xffffffff)
+           h++;
+   }
+   glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+   printf("Hash Cells Used: %d\n", h);
+
+   glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+   NodeType* list = (NodeType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType)*MAX_PARTICLES, bufMask );
+   int l = 0;
+   for( int i = 0; i < MAX_PARTICLES; i++ ) {
+       linkedList[i] = list[i];
+       if(linkedList[i].particleIndex > MAX_PARTICLES){
+           l++;
+       }
+   }
+   glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+   printf("Invalid Particle Indices: %d\n", l);
+
+   int ic = 0;
+   for(int i = 0; i < MAX_PARTICLES; i++){
+       // Follow linked list, make sure list ends
+       int count = 0;
+       uint j = 0;
+       NodeType n = linkedList[i];
+       while (j < MAX_PARTICLES && count < MAX_PARTICLES){
+           // Exit on null
+           if(n.nextNodeIndex == 0xffffffff){
+               break;
+           }else{
+               // Or go to next node
+               j = n.nextNodeIndex;
+               n = linkedList[n.nextNodeIndex];
+           }
+           count ++;
+       }
+       if(count >= MAX_PARTICLES){
+           ic++;
+       }
+   }
+   printf("Infinite Loops Found In Linked List: %d\n\n", ic);
+}
+
 //*************************************************************************************
 
 // Rendering
@@ -850,7 +886,7 @@ void renderScene( GLFWwindow *window ) {
     lastTime = time;
     timestamp ++;
 
-    /***** MATRICIES *****/
+    /***** MATRICES *****/
 	// query our current window size, determine the aspect ratio, and set our viewport size
 	GLfloat ratio;
 	ratio = windowWidth / (GLfloat) windowHeight;
@@ -874,12 +910,10 @@ void renderScene( GLFWwindow *window ) {
 
     // compute perspective and view for neighbor/ signed distance field rendering
     glm::mat4 opMtx, ovMtx;
-    opMtx = glm::ortho(-100.0, 100.0, -100.0, 100.0, 100.0, -100.0);
-    ovMtx = glm::lookAt(glm::vec3(0.0,100.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
+    opMtx = glm::ortho(-1000.0, 1000.0, -1000.0, 1000.0, 0.01, 1000.0);
+    ovMtx = glm::lookAt(glm::vec3(0.0,500.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
     // precompute this modelview matrix
     glm::mat4 omvMtx = ovMtx * mMtx;
-    // precompute the normal matrix
-    glm::mat4 onMtx = glm::transpose(glm::inverse(omvMtx));
 
     // Matricies
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
@@ -905,9 +939,9 @@ void renderScene( GLFWwindow *window ) {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.hashClear);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(GLuint)*HASH_MAP_SIZE);
-    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
-    //glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
-    //glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(NodeType)*MAX_PARTICLES);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+    glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
+    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(NodeType)*MAX_PARTICLES);
     GLuint zero = 0;
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
     glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &zero);
@@ -919,10 +953,9 @@ void renderScene( GLFWwindow *window ) {
 
     /// Compute Neighbors
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(vMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(omvMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(ovMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(opMtx)[0][0]);
 
     neighborProgram->useProgram();
 
@@ -935,54 +968,9 @@ void renderScene( GLFWwindow *window ) {
     // clear the neighbor pass
     glClear( GL_DEPTH_BUFFER_BIT );
 
-    /*
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
-    GLint bufMask = GL_MAP_READ_BIT;
-    HashType* hash = (HashType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType)*HASH_MAP_SIZE, bufMask );
-    int h = 0;
-    for( int i = 0; i < HASH_MAP_SIZE; i++ ) {
-        hashMap[i] = hash[i];
-        if(hashMap[i].headNodeIndex != 0xffffffff)
-            h++;
-    }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
-    printf("Hash Cells Used: %d\n", h);
-
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
-    NodeType* list = (NodeType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType)*MAX_PARTICLES, bufMask );
-    int l = 0;
-    for( int i = 0; i < MAX_PARTICLES; i++ ) {
-        linkedList[i] = list[i];
-        if(linkedList[i].particleIndex > MAX_PARTICLES){
-            l++;
-        }
-    }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
-    printf("Invalid Particle Indices: %d\n\n", l);
-
-
-    for(int i = 0; i < MAX_PARTICLES; i++){
-        // Follow linked list, make sure list ends
-        int count = 0;
-        uint j = 0;
-        NodeType n = linkedList[i];
-        while (j < MAX_PARTICLES && count < MAX_PARTICLES){
-            // Exit on null
-            if(n.nextNodeIndex == 0xffffffff){
-                break;
-            }else{
-                // Or go to next node
-                j = n.nextNodeIndex;
-                n = linkedList[n.nextNodeIndex];
-            }
-            count ++;
-        }
-        if(count >= MAX_PARTICLES){
-            printf("HORRIBLE ERROR\n");
-        }
-    }
-    printf("Finished\n");
-    */
+#if DEBUG
+    debugSpacialHash();
+#endif
 
     /// Compute color based on neighbors
     neighborColorProgram->useProgram();
@@ -1023,6 +1011,7 @@ void renderScene( GLFWwindow *window ) {
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float), matReader.getSwatch(LIGHT_MATERIAL).shininess);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).ambient);
 
+    /*
     glm::vec3 cameraVec = glm::vec3(glm::normalize(-(mvMtx*glm::vec4(lightPos,1.0f))));
     glm::mat4 lMtx = glm::translate(mMtx, -cameraVec);
     glm::vec3 lightForLight = glm::vec3(lMtx*glm::vec4(lightPos,1.0f));
@@ -1036,6 +1025,7 @@ void renderScene( GLFWwindow *window ) {
     glPointSize(LIGHT_SIZE);
     // Draw
     glDrawArrays(GL_POINTS, 0,1);
+    */
 
     /***** GROUND *****/
     // Material settings

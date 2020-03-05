@@ -72,14 +72,8 @@ void main() {
         uint previousHeadIdx = atomicExchange(hashMap[hashIdx], nodeIdx);
 
         // Set linked list data appropriately
-        //nodes[nodeIdx].nextNodeIndex = previousHeadIdx;
-        atomicExchange(nodes[nodeIdx].nextNodeIndex, previousHeadIdx);
-        //nodes[nodeIdx].particleIndex = index;
-        atomicExchange(nodes[nodeIdx].particleIndex, index);
-
-        if(previousHeadIdx == 0xffffffff){
-            //color = vec4(0.0,0.0,1.0,1.0);
-        }
+        nodes[nodeIdx].nextNodeIndex = previousHeadIdx;
+        nodes[nodeIdx].particleIndex = index;
     }else{
         // HERE LIES DRAGONS, VERY FIERCE ONES
         // THIS SHOULD NEVER HAPPEN AND IF IT DOES THINGS WILL BREAK, LOTS OF THINGS!!!!!!
