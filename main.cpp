@@ -1,0 +1,1078 @@
+/*
+ *  CSCI 444, Advanced Computer Graphics, Spring 2019
+ *
+ *  Project: lab2
+ *  File: main.cpp
+ *
+ *  Description:
+ *      Uses shader subroutines to have one shader program accomplish multiple tasks
+ *
+ *  Author:
+ *      Dr. Jeffrey Paone, Colorado School of Mines
+ *  
+ *  Notes:
+ *
+ */
+
+//*************************************************************************************
+
+#include <GL/glew.h>
+#include <GLFW/glfw3.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
+#include <ft2build.h>
+#include FT_FREETYPE_H
+
+#include <stdlib.h>
+#include <stdio.h>
+
+#include <deque>
+
+#include <CSCI441/OpenGLUtils3.hpp>
+#include <CSCI441/ShaderUtils3.hpp>
+
+#include "include/MaterialReader.h"
+#include "include/ShaderProgram4.hpp"
+
+/// DEFINITIONS
+#define NUM_PARTICLES 1000
+
+//*************************************************************************************
+
+// Structure definitions
+
+struct Vertex {
+	GLfloat px, py, pz;	// point location x,y,z
+	GLfloat nx, ny, nz;	// normals x,y,z
+};
+
+// specify our Ground Vertex Information
+const Vertex groundVertices[] = {
+		{ -15.0f, -5.0f, -15.0f, 0.0f, 1.0f, 0.0f }, // 0 - BL
+		{  15.0f, -5.0f, -15.0f, 0.0f, 1.0f, 0.0f }, // 1 - BR
+		{  15.0f, -5.0f,  15.0f, 0.0f, 1.0f, 0.0f }, // 2 - TR
+		{ -15.0f, -5.0f,  15.0f, 0.0f, 1.0f, 0.0f }  // 3 - TL
+};
+// specify our Ground Index Ordering
+const GLushort groundIndices[] = {
+	0, 2, 1, 0, 3, 2
+};
+
+struct character_info {
+  GLfloat ax; // advance.x
+  GLfloat ay; // advance.y
+
+  GLfloat bw; // bitmap.width;
+  GLfloat bh; // bitmap.rows;
+
+  GLfloat bl; // bitmap_left;
+  GLfloat bt; // bitmap_top;
+
+  GLfloat tx; // x offset of glyph in texture coordinates
+} font_characters[128];
+
+
+//*************************************************************************************
+//
+// Global Parameters
+
+/// CONFIGURATIONS ///
+// Materials
+MaterialSettings matReader;
+const string FLOOR_MATERIAL     = "obsidian";
+const string LIGHT_MATERIAL      = "white_light";
+// Lighting
+glm::vec3 lightPos = glm::vec3(6, 10, 1);
+const float LIGHT_SIZE = 6.0f;
+// Simulation timing
+double lastTime;
+// Fluid Dynamics
+const uint MAX_PARTICLES = NUM_PARTICLES;
+const uint HASH_MAP_SIZE = 1000;
+const float SUPPORT_RADIUS = 2.0;
+const int WORK_GROUP_SIZE = 1000;
+uint timestamp = 1;
+
+/// OTHER PARAMS ///
+GLint windowWidth, windowHeight;
+GLboolean shiftDown = false;
+GLboolean leftMouseDown = false;
+glm::vec2 mousePosition( -9999.0f, -9999.0f );
+
+glm::vec3 cameraAngles( 1.82f, 2.01f, 15.0f );
+glm::vec3 eyePoint(   10.0f, 10.0f, 10.0f );
+glm::vec3 lookAtPoint( 0.0f,  0.0f,  0.0f );
+glm::vec3 upVector(    0.0f,  1.0f,  0.0f );
+
+CSCI444::ShaderProgram *phongProgram = NULL;
+CSCI444::ShaderProgram *particleProgram = NULL;
+CSCI444::ShaderProgram *neighborProgram = NULL;
+CSCI444::ShaderProgram *neighborColorProgram = NULL;
+
+/// DATA ///
+
+// VAO/VBOs
+const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2;
+GLuint vaods[3];
+GLuint lightVbod;
+
+// Subroutines
+struct PhongSubroutines{
+    GLuint setting;
+    GLuint phong;
+    GLuint blinnPhong;
+}phongSubroutines;
+
+// UBOS
+struct ShaderUniformBuffer{
+    GLuint blockBinding;
+    GLuint handle;
+    GLint blockSize;
+    GLint* offsets;
+};
+
+ShaderUniformBuffer matriciesUniformBuffer;
+ShaderUniformBuffer lightUniformBuffer;
+ShaderUniformBuffer materialUniformBuffer;
+ShaderUniformBuffer fluidUniformBuffer;
+
+// LOCATIONS
+struct GroundShaderAttributeLocations {
+	GLint position = 0;
+	GLint normal = 1;
+}grndShaderAttribLocs;
+
+struct ParticleShaderAttributeLocations {
+    GLint position = 0;
+    GLint color = 1;
+    GLint index = 2;
+}particleShaderAttribLocs;
+
+// SSBOS and Textures
+struct ParticleSSBOS {
+    GLuint renderData;
+    GLuint vel;
+}particleSSBOs;
+
+struct NeighborSSBOS{
+    GLuint counter;
+    GLuint hashMap;
+    GLuint linkedList;
+} neighborSSBOs;
+
+struct NeighborTextures{
+    GLuint hashMap;
+} neighborTexs;
+
+// Particle Structs and Data
+struct Pos {
+    float x,y,z;
+};
+
+struct NodeType {
+    uint nextNodeIndex;
+    uint particleIndex;
+};
+
+struct HashType {
+    uint headNodeIndex;
+};
+
+struct Particle{
+    float x,y,z,w;
+    float r,g,b,a;
+    GLuint index;
+};
+
+Particle particleData[NUM_PARTICLES];
+HashType hashMap[HASH_MAP_SIZE];
+HashType hashClear[HASH_MAP_SIZE];
+NodeType linkedList[NUM_PARTICLES];
+
+// Textures
+FT_Face face;
+GLuint font_texture_handle, text_vao_handle, text_vbo_handle;
+GLint atlas_width, atlas_height;
+
+CSCI444::ShaderProgram *textShaderProgram = NULL;
+
+struct TextShaderUniformLocations {
+	GLint text_color_location;
+	GLint text_mvp_location;
+} textShaderUniformLocs;
+
+struct TextShaderAttributeLocations {
+	GLint text_texCoord_location;
+} textShaderAttribLocs;
+
+GLboolean mackHack = false;
+
+/// CONTROLS
+bool keys[348];
+
+
+//*************************************************************************************
+
+// Helper Funcs
+void convertSphericalToCartesian() {
+	eyePoint.x = cameraAngles.z * sinf( cameraAngles.x ) * sinf( cameraAngles.y );
+	eyePoint.y = cameraAngles.z * -cosf( cameraAngles.y );
+	eyePoint.z = cameraAngles.z * -cosf( cameraAngles.x ) * sinf( cameraAngles.y );
+}
+
+//*************************************************************************************
+
+// GLFW Event Callbacks
+
+// print errors from GLFW
+static void error_callback(int error, const char* description) {
+	fprintf(stderr, "[ERROR]: %s\n", description);
+}
+
+// handle key events
+static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+	if ((key == GLFW_KEY_ESCAPE || key == 'Q') && action == GLFW_PRESS) {
+		glfwSetWindowShouldClose( window, GLFW_TRUE );
+	} else if(key == GLFW_KEY_LEFT_SHIFT && action == GLFW_PRESS) {
+		shiftDown = true;
+	} else if(key == GLFW_KEY_LEFT_SHIFT && action == GLFW_RELEASE) {
+		shiftDown = false;
+	}
+	if(action == GLFW_PRESS) {
+        switch (key) {
+            case GLFW_KEY_1:
+                // Use phong illumination
+                phongSubroutines.setting = phongSubroutines.phong;
+                break;
+            case GLFW_KEY_2:
+                // Use blinn-phong illumination
+                phongSubroutines.setting = phongSubroutines.blinnPhong;
+                break;
+        }
+    }
+}
+
+// handle mouse clicks
+static void mouseClick_callback(GLFWwindow* window, int button, int action, int mods) {
+	if( button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS ) {
+		leftMouseDown = true;
+	} else {
+		leftMouseDown = false;
+		mousePosition.x = -9999.0f;
+		mousePosition.y = -9999.0f;
+	}
+}
+
+// handle mouse positions
+static void mousePos_callback(GLFWwindow* window, double xpos, double ypos) {
+	// make sure movement is in bounds of the window
+	// glfw captures mouse movement on entire screen
+	if( xpos > 0 && xpos < windowWidth ) {
+		if( ypos > 0 && ypos < windowHeight ) {
+			// active motion
+			if( leftMouseDown ) {
+				if( (mousePosition.x - -9999.0f) < 0.001f ) {
+					mousePosition.x = xpos;
+					mousePosition.y = ypos;
+				} else {
+					if( !shiftDown ) {
+						cameraAngles.x += (xpos - mousePosition.x)*0.005f;
+						cameraAngles.y += (ypos - mousePosition.y)*0.005f;
+
+						if( cameraAngles.y < 0 ) cameraAngles.y = 0.0f + 0.001f;
+						if( cameraAngles.y >= M_PI ) cameraAngles.y = M_PI - 0.001f;
+					} else {
+						double totChgSq = (xpos - mousePosition.x) + (ypos - mousePosition.y);
+						cameraAngles.z += totChgSq*0.01f;
+
+						if( cameraAngles.z <= 2.0f ) cameraAngles.z = 2.0f;
+						if( cameraAngles.z >= 50.0f ) cameraAngles.z = 50.0f;
+					}
+					convertSphericalToCartesian();
+
+
+					mousePosition.x = xpos;
+					mousePosition.y = ypos;
+				}
+			}
+			// passive motion
+			else {
+
+			}
+		}
+	}
+}
+
+// handle scroll events
+static void scroll_callback(GLFWwindow* window, double xOffset, double yOffset ) {
+	GLdouble totChgSq = yOffset;
+	cameraAngles.z += totChgSq*0.01f;
+
+	if( cameraAngles.z <= 2.0f ) cameraAngles.z = 2.0f;
+	if( cameraAngles.z >= 50.0f ) cameraAngles.z = 50.0f;
+	
+	convertSphericalToCartesian();
+}
+
+//*************************************************************************************
+
+// Setup Funcs
+
+// setup GLFW
+GLFWwindow* setupGLFW() {
+	glfwSetErrorCallback(error_callback);
+
+	if (!glfwInit()) {
+		fprintf( stderr, "[ERROR]: Could not initialize GLFW\n" );
+		exit(EXIT_FAILURE);
+	}
+
+	// create a 4.1 Core OpenGL Context
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+
+	GLFWwindow *window = glfwCreateWindow(640, 480, "Water Simulator", NULL, NULL);
+	if( !window ) {
+		glfwTerminate();
+		exit(EXIT_FAILURE);
+	}
+
+	glfwMakeContextCurrent(window);
+	glfwSwapInterval(1);
+
+	// register callbacks
+	glfwSetKeyCallback(window, key_callback);
+	glfwSetMouseButtonCallback(window, mouseClick_callback);
+	glfwSetCursorPosCallback(window, mousePos_callback);
+	glfwSetScrollCallback(window, scroll_callback);
+
+	// return our window
+	return window;
+}
+
+// setup OpenGL parameters
+void setupOpenGL() {
+	glEnable( GL_DEPTH_TEST );							// turn on depth testing
+	glDepthFunc( GL_LESS );								// use less than test
+	glFrontFace( GL_CCW );								// front faces are CCW
+	glEnable(GL_BLEND);									// turn on alpha blending
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);	// blend w/ 1-a
+	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );				// clear our screen to black
+
+	// initialize GLEW
+	glewExperimental = GL_TRUE;
+	GLenum glewResult = glewInit();
+
+	// check for an error
+	if( glewResult != GLEW_OK ) {
+		printf( "[ERROR]: Error initalizing GLEW\n");
+		exit(EXIT_FAILURE);
+	}
+
+	// print information about our current OpenGL set up
+	CSCI441::OpenGLUtils::printOpenGLInfo();
+}
+
+// load our shaders and get locations for uniforms and attributes
+void setupShaders() {
+    // Set Programs to be seperable
+    CSCI444::ShaderProgram::enableSeparablePrograms();
+
+	// Load our shader programs
+    const char* phongShaderFilenames [] = {"shaders/phong.v.glsl", "shaders/phong.f.glsl"};
+    phongProgram = new CSCI444::ShaderProgram(phongShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
+    const char* particleShaderFilenames [] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
+    particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
+    const char* neighborShaderFilenames [] = {"shaders/neighbor.v.glsl", "shaders/neighbor.f.glsl"};
+    neighborProgram = new CSCI444::ShaderProgram(neighborShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
+    const char* colorShaderFilenames [] = {"shaders/neighborColor.c.glsl"};
+    neighborColorProgram = new CSCI444::ShaderProgram(colorShaderFilenames, GL_COMPUTE_SHADER_BIT);
+
+    // Query all of our subroutine indices
+    phongSubroutines.phong              = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "phong");
+    phongSubroutines.blinnPhong         = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "blinnPhong");
+    phongSubroutines.setting            = phongSubroutines.phong; // set default specular shader to be pass through
+
+
+    // Setup text shader
+    textShaderProgram        = new CSCI444::ShaderProgram("shaders/textShaderv410.v.glsl",
+                                                          "shaders/textShaderv410.f.glsl" );
+	textShaderUniformLocs.text_color_location      = textShaderProgram->getUniformLocation( "color" );
+	textShaderUniformLocs.text_mvp_location        = textShaderProgram->getUniformLocation( "MVP_Matrix" );
+	textShaderAttribLocs.text_texCoord_location    = textShaderProgram->getAttributeLocation( "coord" );
+}
+
+void setupPipelines(){
+    /*
+    glCreateProgramPipelines(1, &pipelineGroundHandle);
+    glUseProgramStages(pipelineGroundHandle, vertProgram->getShaderStages(), vertProgram->getShaderProgramHandle());
+    glUseProgramStages(pipelineGroundHandle, perlinProgram->getShaderStages(), perlinProgram->getShaderProgramHandle());
+    */
+}
+
+void setupParticleData(){
+    // randomly initialize particle data
+    for(GLuint i = 0; i < NUM_PARTICLES; i++){
+        particleData[i].x = ((rand() % 1000) / 100.0) - 5;
+        particleData[i].y = ((rand() % 1000) / 100.0) - 5;
+        particleData[i].z = ((rand() % 1000) / 100.0) - 5;
+        particleData[i].r = 1.0;
+        particleData[i].g = 1.0;
+        particleData[i].b = 0.0;
+        particleData[i].index = i;
+    }
+
+    // setup hash map
+    for(auto & i : hashMap){
+        i = {0xffffffff};
+    }
+    // set up hash clearer
+    for(auto & i : hashClear){
+        i = {0xffffffff};
+    }
+    // setup linked list data
+    for(auto & i : linkedList){
+        i = {0xffffffff, 0};
+    }
+}
+
+// load in our model data to VAOs and VBOs
+void setupBuffers() {
+    // Load data in for material reader
+    matReader.loadMaterials("materials.mat");
+
+	//------------ BEGIN UBOS ----------
+    // setup UBs
+    // Set up UBO binding numbers
+    matriciesUniformBuffer.blockBinding     = 0;
+    materialUniformBuffer.blockBinding      = 1;
+    lightUniformBuffer.blockBinding         = 2;
+    fluidUniformBuffer.blockBinding         = 4;
+
+    // Set up UBO name orders
+    const GLchar* matrixNames[]     = {"Matricies.modelView", "Matricies.view", "Matricies.projection", "Matricies.normal", "Matricies.viewPort"};
+    const GLchar* lightNames[]      = {"Light.diffuse", "Light.specular", "Light.ambient", "Light.position"};
+    const GLchar* materialNames[]   = {"Material.diffuse", "Material.specular", "Material.shininess", "Material.ambient"};
+    const GLchar* fluidNames[]      = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.timestamp", "FluidDynamics.supportRadius", "FluidDynamics.time"};
+
+    // get block offsets
+    matriciesUniformBuffer.offsets  = phongProgram->getUniformBlockOffsets("Matricies", matrixNames);
+    lightUniformBuffer.offsets      = phongProgram->getUniformBlockOffsets("Light", lightNames);
+    materialUniformBuffer.offsets   = phongProgram->getUniformBlockOffsets("Material", materialNames);
+    fluidUniformBuffer.offsets      = neighborColorProgram->getUniformBlockOffsets("FluidDynamics", fluidNames);
+
+    // get block size
+    matriciesUniformBuffer.blockSize  = phongProgram->getUniformBlockSize("Matricies");
+    lightUniformBuffer.blockSize      = phongProgram->getUniformBlockSize("Light");
+    materialUniformBuffer.blockSize   = phongProgram->getUniformBlockSize("Material");
+    fluidUniformBuffer.blockSize      = neighborColorProgram->getUniformBlockSize("FluidDynamics");
+
+    // Create UBO buffers and bind
+    // Matrix Buffer
+    glGenBuffers(1, &matriciesUniformBuffer.handle);
+    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    // Buffer null data
+    glBufferData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
+    // Set the UBO's base
+    glBindBufferBase(GL_UNIFORM_BUFFER, matriciesUniformBuffer.blockBinding, matriciesUniformBuffer.handle);
+    // Set block binding and buffer base for each program that uses the buffer
+    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
+    glUniformBlockBinding(particleProgram->getShaderProgramHandle(), particleProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
+    glUniformBlockBinding(neighborProgram->getShaderProgramHandle(), neighborProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
+
+    // Light Buffer
+    glGenBuffers(1, &lightUniformBuffer.handle);
+    glBindBuffer(GL_UNIFORM_BUFFER, lightUniformBuffer.handle);
+    glBufferData(GL_UNIFORM_BUFFER, lightUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, lightUniformBuffer.blockBinding, lightUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[0], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).diffuse);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[1], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).specular);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[2], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).ambient);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
+    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Light"), lightUniformBuffer.blockBinding );
+
+
+    // Material Buffer
+    glGenBuffers(1, &materialUniformBuffer.handle);
+    glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
+    glBufferData(GL_UNIFORM_BUFFER, materialUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, materialUniformBuffer.blockBinding, materialUniformBuffer.handle);
+    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Material"), materialUniformBuffer.blockBinding );
+
+    // Fluid Buffer
+    glGenBuffers(1, &fluidUniformBuffer.handle);
+    glBindBuffer(GL_UNIFORM_BUFFER, fluidUniformBuffer.handle);
+    glBufferData(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockBinding, fluidUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[0], sizeof(GLuint), &MAX_PARTICLES);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[1], sizeof(GLuint), &HASH_MAP_SIZE);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &SUPPORT_RADIUS);
+    glUniformBlockBinding(neighborProgram->getShaderProgramHandle(), neighborProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
+    glUniformBlockBinding(neighborColorProgram->getShaderProgramHandle(), neighborColorProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
+
+    //------------ END UBOS ----------
+
+    //------------ START SSBOs --------
+    /// Position SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &particleSSBOs.renderData);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.renderData);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBOs.renderData);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(Particle) * NUM_PARTICLES, particleData, GL_DYNAMIC_DRAW);
+    /*
+    GLint bufMask = GL_MAP_WRITE_BIT; // the invalidate makes a big difference when re-writing
+    Particle *particles = (Particle *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(Particle) * NUM_PARTICLES, bufMask );
+    for( int i = 0; i < NUM_PARTICLES; i++ ){
+        particles[i].x = particleData[i].x;
+        particles[i].y = particleData[i].y;
+        particles[i].z = particleData[i].z;
+        particles[i].r = particleData[i].r;
+        particles[i].g = particleData[i].g;
+        particles[i].b = particleData[i].b;
+        particles[i].index = particleData[i].index;
+    }
+    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    */
+
+    /// Velocity SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &particleSSBOs.vel);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.vel);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, particleSSBOs.vel);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4*sizeof(float)*NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    /// Hash SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &neighborSSBOs.hashMap);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, neighborSSBOs.hashMap);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(HashType)*HASH_MAP_SIZE, NULL, GL_DYNAMIC_DRAW);
+    /// Linked List SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &neighborSSBOs.linkedList);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, neighborSSBOs.linkedList);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NodeType)*NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    /// Atomic SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &neighborSSBOs.counter);
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
+    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, neighborSSBOs.counter);
+    glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_STREAM_COPY);
+    //------------ END SSBOs --------
+
+    // generate our vertex array object descriptors
+    glGenVertexArrays( 3, vaods );
+    // will be used to stroe VBO descriptors for ARRAY_BUFFER and ELEMENT_ARRAY_BUFFER
+    GLuint vbods[2];
+
+    //------------ BEGIN PARTICLE VAO ------------
+    // generate our vertex buffer object descriptors for the GROUND
+    glBindVertexArray( vaods[PARTICLES] );
+    // bind the VBO for our Particle Array Buffer
+    glBindBuffer( GL_ARRAY_BUFFER, particleSSBOs.renderData );
+    // enable our position attribute
+    glEnableVertexAttribArray(particleShaderAttribLocs.position );
+    // map the position attribute to data within our buffer
+    glVertexAttribPointer(particleShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(Particle), (void*) 0 );
+    // enable our color attribute
+    glEnableVertexAttribArray(particleShaderAttribLocs.color );
+    // map the color attribute to data within our buffer
+    glVertexAttribPointer(particleShaderAttribLocs.color, 3, GL_FLOAT, GL_FALSE, sizeof(Particle), (void*)(4 * sizeof(float)));
+    // enable our index attribute
+    glEnableVertexAttribArray(particleShaderAttribLocs.index );
+    // map the color attribute to data within our buffer
+    glVertexAttribPointer(particleShaderAttribLocs.index, 1, GL_UNSIGNED_INT, GL_FALSE, sizeof(Particle), (void*)(8 * sizeof(float)));
+    //------------  END  PARTICLE VAO------------
+
+
+    //------------ BEGIN LIGHT VAO ------------
+    // Draw Ground
+    glBindVertexArray( vaods[LIGHT] );
+
+    // generate our vertex buffer object descriptors for the LIGHT
+    glGenBuffers( 1, &lightVbod );
+    // bind the VBO for our Ground Array Buffer
+    glBindBuffer( GL_ARRAY_BUFFER, lightVbod );
+    // send the data to the GPU
+    glBufferData( GL_ARRAY_BUFFER, 3*sizeof(float), NULL, GL_DYNAMIC_DRAW );
+
+    // enable our position attribute
+    glEnableVertexAttribArray(grndShaderAttribLocs.position );
+    // map the position attribute to data within our buffer
+    glVertexAttribPointer(grndShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void*) 0 );
+    //------------  END  LIGHT VAO------------
+
+    //------------ BEGIN GROUND VAO ------------
+    // Draw Ground
+    glBindVertexArray( vaods[GROUND] );
+
+    // generate our vertex buffer object descriptors for the GROUND
+    glGenBuffers( 2, vbods );
+    // bind the VBO for our Ground Array Buffer
+    glBindBuffer( GL_ARRAY_BUFFER, vbods[0] );
+    // send the data to the GPU
+    glBufferData( GL_ARRAY_BUFFER, sizeof(groundVertices), groundVertices, GL_STATIC_DRAW );
+
+    // bind the VBO for our Ground Element Array Buffer
+    glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbods[1] );
+    // send the data to the GPU
+    glBufferData( GL_ELEMENT_ARRAY_BUFFER, sizeof(groundIndices), groundIndices, GL_STATIC_DRAW );
+
+    // enable our position attribute
+    glEnableVertexAttribArray(grndShaderAttribLocs.position );
+    // map the position attribute to data within our buffer
+    glVertexAttribPointer(grndShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*) 0 );
+
+    // enable our color attribute
+    glEnableVertexAttribArray(grndShaderAttribLocs.normal );
+    // map the color attribute to data within our buffer
+    glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*)(3 * sizeof(float)) );
+
+    //------------  END  GROUND VAO------------
+}
+
+void setupFonts() {
+	FT_Library ft;
+
+	if(FT_Init_FreeType(&ft)) {
+	  fprintf(stderr, "Could not init freetype library\n");
+	  exit(EXIT_FAILURE);
+	}
+
+	if(FT_New_Face(ft, "fonts/DroidSansMono.ttf", 0, &face)) {
+	  fprintf(stderr, "Could not open font\n");
+	  exit(EXIT_FAILURE);
+	}
+
+	FT_Set_Pixel_Sizes(face, 0, 20);
+
+	FT_GlyphSlot g = face->glyph;
+	GLuint w = 0;
+	GLuint h = 0;
+
+	for(int i = 32; i < 128; i++) {
+	  if(FT_Load_Char(face, i, FT_LOAD_RENDER)) {
+	    fprintf(stderr, "Loading character %c failed!\n", i);
+	    continue;
+	  }
+
+	  w += g->bitmap.width;
+	  h = (h > g->bitmap.rows ? h : g->bitmap.rows);
+	}
+
+	/* you might as well save this value as it is needed later on */
+	atlas_width = w;
+	atlas_height = h;
+
+	glEnable( GL_TEXTURE_2D );
+	glActiveTexture(GL_TEXTURE0);
+	glGenTextures(1, &font_texture_handle);
+	glBindTexture(GL_TEXTURE_2D, font_texture_handle);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+
+	GLint x = 0;
+
+	for(int i = 32; i < 128; i++) {
+	  if(FT_Load_Char(face, i, FT_LOAD_RENDER))
+	    continue;
+
+	  font_characters[i].ax = g->advance.x >> 6;
+	  font_characters[i].ay = g->advance.y >> 6;
+
+	  font_characters[i].bw = g->bitmap.width;
+	  font_characters[i].bh = g->bitmap.rows;
+
+	  font_characters[i].bl = g->bitmap_left;
+	  font_characters[i].bt = g->bitmap_top;
+
+	  font_characters[i].tx = (float)x / w;
+
+	  glTexSubImage2D(GL_TEXTURE_2D, 0, x, 0, g->bitmap.width, g->bitmap.rows, GL_RED, GL_UNSIGNED_BYTE, g->bitmap.buffer);
+
+	  x += g->bitmap.width;
+	}
+
+	glGenVertexArrays(1, &text_vao_handle);
+	glBindVertexArray(text_vao_handle);
+
+	glGenBuffers(1, &text_vbo_handle);
+	glBindBuffer(GL_ARRAY_BUFFER, text_vbo_handle);
+	glEnableVertexAttribArray(textShaderAttribLocs.text_texCoord_location);
+	glVertexAttribPointer(textShaderAttribLocs.text_texCoord_location, 4, GL_FLOAT, GL_FALSE, 0, (void*)0);
+}
+
+//*************************************************************************************
+
+// Rendering
+
+void render_text(const char *text, FT_Face face, float x, float y, float sx, float sy) {
+	struct point {
+		GLfloat x;
+		GLfloat y;
+		GLfloat s;
+		GLfloat t;
+	} coords[6 * strlen(text)];
+
+	GLint n = 0;
+
+	for(const char *p = text; *p; p++) {
+		int characterIndex = (int)*p;
+
+		character_info character = font_characters[characterIndex];
+
+		GLfloat x2 =  x + character.bl * sx;
+		GLfloat y2 = -y - character.bt * sy;
+		GLfloat w = character.bw * sx;
+		GLfloat h = character.bh * sy;
+
+		/* Advance the cursor to the start of the next character */
+		x += character.ax * sx;
+		y += character.ay * sy;
+
+		/* Skip glyphs that have no pixels */
+		if(!w || !h)
+			continue;
+
+		coords[n++] = (point){x2,     -y2    , character.tx,                                0};
+		coords[n++] = (point){x2 + w, -y2    , character.tx + character.bw / atlas_width,   0};
+		coords[n++] = (point){x2,     -y2 - h, character.tx,                                character.bh / atlas_height}; //remember: each glyph occupies a different amount of vertical space
+
+		coords[n++] = (point){x2 + w, -y2    , character.tx + character.bw / atlas_width,   0};
+		coords[n++] = (point){x2,     -y2 - h, character.tx,                                character.bh / atlas_height};
+		coords[n++] = (point){x2 + w, -y2 - h, character.tx + character.bw / atlas_width,   character.bh / atlas_height};
+	}
+	glBindVertexArray(text_vao_handle);
+	glBindBuffer(GL_ARRAY_BUFFER, text_vbo_handle);
+	glBufferData(GL_ARRAY_BUFFER, sizeof( coords ), coords, GL_DYNAMIC_DRAW);
+	glDrawArrays(GL_TRIANGLES, 0, n);
+}
+
+/*
+static const int P1 = 73856093;
+static const int P2 = 19349663;
+static const int P3 = 83492791;
+// SOURCE: Optimized Spatial Hashing for Collision Detection of Deformable Objects
+// Matthias Teschner
+unsigned int spacialHash(float x, float y, float z){
+    return (int(floor(x/SUPPORT_RADIUS) * P1) ^
+            int(floor(y/SUPPORT_RADIUS) * P2) ^
+            int(floor(z/SUPPORT_RADIUS) * P3)) % HASH_MAP_SIZE;
+}
+
+void spacialHashParticles(){
+    // Bind buffers
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBOs.data);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, particleSSBOs.vel);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, neighborSSBOs.hashMap);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, neighborSSBOs.linkedList);
+    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, neighborSSBOs.counter);
+
+    // Read in Position Data
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.data);
+    GLint bufMask = GL_MAP_READ_BIT;
+    Particle* particles = (Particle *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, NUM_PARTICLES * 8 * sizeof(float), bufMask );
+    for( int i = 0; i < NUM_PARTICLES; i++ ) {
+        particleData[i].x = particles[i].x;
+        particleData[i].y = particles[i].y;
+        particleData[i].z = particles[i].z;
+    }
+    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+
+    // Create Hash Map and Linked List
+    for(unsigned int i = 0; i < NUM_PARTICLES; i++){
+        // Calculate hash
+        unsigned int hashIdx = spacialHash(particles[i].x, particles[i].y, particles[i].z);
+        // Update the head pointer in the hash map
+        HashType newHead = {i, timestamp};
+        HashType previousHead = hashMap[hashIdx];
+        hashMap[hashIdx] = newHead;
+
+        // Set linked list data appropriately
+        linkedList[i].nextNodeIndex = (previousHead.timestamp == timestamp) ? previousHead.headNodeIndex : 0xffffffff;
+    }
+}
+*/
+
+// handles drawing everything to our buffer
+void renderScene( GLFWwindow *window ) {
+	/***** TIME AND TIMESTAMP *****/
+    double time = glfwGetTime();
+    double dt = time - lastTime;
+    lastTime = time;
+    timestamp ++;
+
+    /***** MATRICIES *****/
+	// query our current window size, determine the aspect ratio, and set our viewport size
+	GLfloat ratio;
+	ratio = windowWidth / (GLfloat) windowHeight;
+	glViewport(0, 0, windowWidth, windowHeight);
+
+	// create our Model, View, Projection, viewport matrices
+	glm::mat4 mMtx, vMtx, pMtx, vpMtx;
+	mMtx = glm::mat4(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);
+
+	// compute our projection matrix
+	pMtx = glm::perspective( 45.0f, ratio, 0.1f, 1000.0f );
+	// compute our view matrix based on our current camera setup
+	vMtx = glm::lookAt( eyePoint,lookAtPoint, upVector );
+	// Computer viewport matrix
+    vpMtx = glm::mat4(glm::mat3(windowWidth/2, 0.0f, windowWidth/2.0f, 0.0f, windowHeight/2.0f, windowHeight/2.0f, 0,0,1));
+
+    // precompute the modelview matrix
+	glm::mat4 mvMtx = vMtx * mMtx;
+	// precompute the normal matrix
+    glm::mat4 nMtx = glm::transpose(glm::inverse(mvMtx));
+
+    // compute perspective and view for neighbor/ signed distance field rendering
+    glm::mat4 opMtx, ovMtx;
+    opMtx = glm::ortho(-100.0, 100.0, -100.0, 100.0, 100.0, -100.0);
+    ovMtx = glm::lookAt(glm::vec3(0.0,100.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
+    // precompute this modelview matrix
+    glm::mat4 omvMtx = ovMtx * mMtx;
+    // precompute the normal matrix
+    glm::mat4 onMtx = glm::transpose(glm::inverse(omvMtx));
+
+    // Matricies
+    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(vMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[4], sizeof(glm::mat4), &(vpMtx)[0][0]);
+
+
+    /***** WATER PARTICLES *****/
+    /// Buffers
+    // Bind buffers
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, particleSSBOs.renderData);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, particleSSBOs.vel);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, neighborSSBOs.hashMap);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, neighborSSBOs.linkedList);
+    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0, neighborSSBOs.counter);
+
+    // Clear buffer data
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(HashType)*HASH_MAP_SIZE, hashClear, GL_DYNAMIC_COPY);
+    GLuint zero = 0;
+    glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
+    glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &zero);
+
+    // Buffer uniform data
+    glBindBuffer(GL_UNIFORM_BUFFER, fluidUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLuint), &timestamp);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLfloat), &time);
+
+    /// Compute Neighbors
+    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(vMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
+
+    neighborProgram->useProgram();
+    glBindVertexArray( vaods[PARTICLES] );
+    glDrawArrays( GL_POINTS, 0, NUM_PARTICLES);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+    /// Compute color based on neighbors
+    neighborColorProgram->useProgram();
+    //glDispatchCompute(NUM_PARTICLES / WORK_GROUP_SIZE, 1, 1);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
+    GLint bufMask = GL_MAP_READ_BIT;
+    HashType* hash = (HashType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType)*HASH_MAP_SIZE, bufMask );
+    for( int i = 0; i < HASH_MAP_SIZE; i++ ) {
+        hashMap[i] = hash[i];
+    }
+
+    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+    NodeType* list = (NodeType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType)*NUM_PARTICLES, bufMask );
+    for( int i = 0; i < NUM_PARTICLES; i++ ) {
+        linkedList[i] = list[i];
+        if(linkedList[i].particleIndex != linkedList[i-1].particleIndex){
+            printf("%d\n", linkedList[i].particleIndex);
+        }
+    }
+    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+
+    /// Draw particles
+    // Matrices
+
+
+    //particleProgram->useProgram();
+    //glBindVertexArray( vaods[PARTICLES] );
+    //glDrawArrays( GL_POINTS, 0, NUM_PARTICLES);
+
+    /***** LIGHT/GROUND COMMON *****/
+    // Set shader
+    phongProgram->useProgram();
+    // set up the subroutines
+    glUniformSubroutinesuiv(GL_FRAGMENT_SHADER, 1, &phongSubroutines.setting);
+    // Matricies
+    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(vMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
+
+    /***** LIGHT *****/
+    // Material settings
+    glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).diffuse);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).specular);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float), matReader.getSwatch(LIGHT_MATERIAL).shininess);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).ambient);
+
+    glm::vec3 cameraVec = glm::vec3(glm::normalize(-(mvMtx*glm::vec4(lightPos,1.0f))));
+    glm::mat4 lMtx = glm::translate(mMtx, -cameraVec);
+    glm::vec3 lightForLight = glm::vec3(lMtx*glm::vec4(lightPos,1.0f));
+    glBindBuffer(GL_UNIFORM_BUFFER, lightUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
+    // Buffer light position
+    glBindVertexArray(vaods[LIGHT]);
+    glBindBuffer(GL_ARRAY_BUFFER, lightVbod);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*3, &(lightForLight)[0]);
+    // Set up light size
+    glPointSize(LIGHT_SIZE);
+    // Draw
+    glDrawArrays(GL_POINTS, 0,1);
+
+    /***** GROUND *****/
+    // Material settings
+    glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float)*4, matReader.getSwatch(FLOOR_MATERIAL).diffuse);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float)*4, matReader.getSwatch(FLOOR_MATERIAL).specular);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float), matReader.getSwatch(FLOOR_MATERIAL).shininess);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float)*4, matReader.getSwatch(FLOOR_MATERIAL).ambient);
+    // Light stuff
+    glBindBuffer(GL_UNIFORM_BUFFER, lightUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
+
+    // bind our Ground VAO
+	glBindVertexArray( vaods[GROUND] );
+	// draw our ground!
+	glDrawElements( GL_TRIANGLES, sizeof(groundIndices)/sizeof(unsigned short), GL_UNSIGNED_SHORT, (void*)0 );
+
+	//---- PARTICLES -----
+
+}
+
+// program entry point
+int main( int argc, char *argv[] ) {
+	GLFWwindow *window = setupGLFW();	// setup GLFW and get our window
+	setupOpenGL();						// setup OpenGL & GLEW
+	setupShaders();						// load our shader programs, uniforms, and attribtues
+	setupPipelines();                   // build pipelines from the shader programs created in setupShaders()
+    setupParticleData();
+	setupBuffers();						// load our models into GPU memory
+	setupFonts();						// load our fonts into memory
+
+	convertSphericalToCartesian();		// position our camera in a pretty place
+
+	lastTime = glfwGetTime();
+
+	GLfloat ClockLastTime = glfwGetTime();
+	GLuint nbFrames = 0;
+	GLdouble fps = 0;
+	std::deque<GLdouble> fpsAvgs(9);
+	GLdouble fpsAvg = 0;
+	
+	// as long as our window is open
+	while( !glfwWindowShouldClose(window) ) {
+		// clear the prior contents of our buffer
+		glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+		
+		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+
+		// render our scene
+		renderScene( window );
+
+		// Measure speed
+		GLdouble currentTime = glfwGetTime();
+		nbFrames++;
+		if ( currentTime - ClockLastTime >= 0.33f ){ // If last prinf() was more than 1 sec ago
+			// printf and reset timer
+			fps = GLdouble(nbFrames)/(currentTime - ClockLastTime);
+			nbFrames = 0;
+            ClockLastTime = currentTime;
+
+			fpsAvgs.pop_front();
+			fpsAvgs.push_back( fps );
+
+			GLdouble totalFPS = 0;
+			for( GLuint i = 0; i < fpsAvgs.size(); i++ ) {
+				totalFPS += fpsAvgs.at(i);
+			}
+			fpsAvg = totalFPS / fpsAvgs.size();
+		}
+
+		glBindVertexArray(text_vao_handle);
+		glBindTexture(GL_TEXTURE_2D, font_texture_handle);
+
+		textShaderProgram->useProgram();
+
+		glm::mat4 mvp = glm::mat4(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);
+
+		glUniformMatrix4fv(textShaderUniformLocs.text_mvp_location, 1, GL_FALSE, &mvp[0][0]);
+		
+		GLfloat white[4] = {1, 1, 1, 1};
+		glUniform4fv(textShaderUniformLocs.text_color_location, 1, white);
+
+		GLfloat sx = 2.0 / (GLfloat)windowWidth;
+		GLfloat sy = 2.0 / (GLfloat)windowHeight;
+
+		char fpsStr[80];
+		sprintf( fpsStr, "%.3f frames/sec (Avg: %.3f)", fps, fpsAvg);
+		render_text(fpsStr, face, -1 + 8 * sx,   1 - 30 * sy, sx, sy);
+
+        char illuminationStr[100];
+        if(phongSubroutines.setting == phongSubroutines.phong) {
+            sprintf(illuminationStr, "(1-2) Illumination: Phong");
+        }else{
+            sprintf(illuminationStr, "(1-2) Illumination: Blinn-Phong");
+        }
+        render_text(illuminationStr, face, -1 + 8 * sx,   1 - 50 * sy, sx, sy);
+
+		// swap the front and back buffers
+		glfwSwapBuffers(window);
+		// check for any events
+		glfwPollEvents();
+		
+		// the following code is a hack for OSX Mojave
+		// the window is initially black until it is moved
+		// so instead of having the user manually move the window,
+		// we'll automatically move it and then move it back
+		if( !mackHack ) {
+			GLint xpos, ypos;
+			glfwGetWindowPos(window, &xpos, &ypos);
+			glfwSetWindowPos(window, xpos+10, ypos+10);
+			glfwSetWindowPos(window, xpos, ypos);
+			mackHack = true;
+		}
+
+	}
+
+	// destroy our window
+	glfwDestroyWindow(window);
+	// end GLFW
+	glfwTerminate();
+
+	// delete our shader programs
+	delete phongProgram;
+	delete textShaderProgram;
+
+	// SUCCESS!!
+	return EXIT_SUCCESS;
+}
