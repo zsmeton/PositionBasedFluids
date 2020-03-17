@@ -1,7 +1,7 @@
 #version 430
 
 // ***** COMPUTE SHADER INPUT *****
-layout( local_size_x = 1000, local_size_y = 1, local_size_z = 1 ) in;
+layout( local_size_x = 1536, local_size_y = 1, local_size_z = 1 ) in;
 
 // ***** COMPUTE SHADER STRUCTS *****
 struct NodeType {

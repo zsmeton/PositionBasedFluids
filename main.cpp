@@ -88,10 +88,10 @@ const float LIGHT_SIZE = 6.0f;
 // Simulation timing
 double lastTime;
 // Fluid Dynamics
-const uint MAX_PARTICLES = 10000;
-const uint HASH_MAP_SIZE = 20000;
+const int WORK_GROUP_SIZE = 1536;
+const uint MAX_PARTICLES = WORK_GROUP_SIZE*10;
+const uint HASH_MAP_SIZE = MAX_PARTICLES;
 const float SUPPORT_RADIUS = 2.0;
-const int WORK_GROUP_SIZE = 1000;
 uint timestamp = 1;
 
 /// OTHER PARAMS ///
@@ -402,8 +402,8 @@ void setupShaders() {
     phongProgram = new CSCI444::ShaderProgram(phongShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
     const char* particleShaderFilenames [] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
     particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
-    const char* neighborShaderFilenames [] = {"shaders/neighbor.v.glsl", "shaders/neighbor.f.glsl"};
-    neighborProgram = new CSCI444::ShaderProgram(neighborShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
+    const char* neighborShaderFilenames [] = {"shaders/neighbor.v.glsl"};
+    neighborProgram = new CSCI444::ShaderProgram(neighborShaderFilenames, GL_VERTEX_SHADER_BIT);
     const char* colorShaderFilenames [] = {"shaders/neighborColor.c.glsl"};
     neighborColorProgram = new CSCI444::ShaderProgram(colorShaderFilenames, GL_COMPUTE_SHADER_BIT);
 
@@ -909,11 +909,11 @@ void renderScene( GLFWwindow *window ) {
     glm::mat4 nMtx = glm::transpose(glm::inverse(mvMtx));
 
     // compute perspective and view for neighbor/ signed distance field rendering
-    glm::mat4 opMtx, ovMtx;
-    opMtx = glm::ortho(-1000.0, 1000.0, -1000.0, 1000.0, 0.01, 1000.0);
-    ovMtx = glm::lookAt(glm::vec3(0.0,500.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
+    //glm::mat4 opMtx, ovMtx;
+    //opMtx = glm::ortho(-1000.0, 1000.0, -1000.0, 1000.0, 0.01, 1000.0);
+    //ovMtx = glm::lookAt(glm::vec3(0.0,500.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
     // precompute this modelview matrix
-    glm::mat4 omvMtx = ovMtx * mMtx;
+    //glm::mat4 omvMtx = ovMtx * mMtx;
 
     // Matricies
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
@@ -952,30 +952,28 @@ void renderScene( GLFWwindow *window ) {
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLfloat), &time);
 
     /// Compute Neighbors
-    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(omvMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(ovMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(opMtx)[0][0]);
+    // Set ortho matricies
+    //glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    //glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(omvMtx)[0][0]);
+    //glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(ovMtx)[0][0]);
+    //glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(opMtx)[0][0]);
 
     neighborProgram->useProgram();
 
     glBindVertexArray( vaods[PARTICLES] );
-    glDisable( GL_DEPTH_TEST );
-    glPointSize(1); //!!!!!! DO NOT CHANGE THE POINT SIZE, MUST BE 1 !!!!!!
-    glDrawArrays( GL_POINTS, 0, MAX_PARTICLES);
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
-    glEnable( GL_DEPTH_TEST );
-    // clear the neighbor pass
-    glClear( GL_DEPTH_BUFFER_BIT );
+    glEnable( GL_RASTERIZER_DISCARD ); // Disable rasterizing
+    glDrawArrays( GL_POINTS, 0, MAX_PARTICLES); // Draw the particles
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT); // Make sure all data was processes
+    glDisable( GL_RASTERIZER_DISCARD ); // Renable rasterization
 
-#if DEBUG
+    #if DEBUG
     debugSpacialHash();
-#endif
+    #endif
 
     /// Compute color based on neighbors
     neighborColorProgram->useProgram();
     glDispatchCompute(MAX_PARTICLES / WORK_GROUP_SIZE, 1, 1);
-    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 
     /// Draw particles
@@ -1150,6 +1148,9 @@ int main( int argc, char *argv[] ) {
 	// delete our shader programs
 	delete phongProgram;
 	delete textShaderProgram;
+	delete neighborProgram;
+	delete neighborColorProgram;
+    delete particleProgram;
 
 	// SUCCESS!!
 	return EXIT_SUCCESS;
