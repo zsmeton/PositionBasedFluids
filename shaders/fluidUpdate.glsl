@@ -23,7 +23,6 @@ layout(shared, binding = 4) uniform FluidDynamics {
     uint maxParticles;
     uint maxNeighbors;
     uint mapSize;
-    uint timestamp;
     float supportRadius;
     float time;
 } fluid;

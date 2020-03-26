@@ -94,7 +94,6 @@ const uint MAX_PARTICLES = WORK_GROUP_SIZE*10;
 const uint HASH_MAP_SIZE = MAX_PARTICLES;
 const uint MAX_NEIGHBORS = 1000;
 const float SUPPORT_RADIUS = 2.0;
-uint timestamp = 1;
 
 /// OTHER PARAMS ///
 GLint windowWidth, windowHeight;
@@ -505,7 +504,7 @@ void setupBuffers() {
     const GLchar* matrixNames[]     = {"Matricies.modelView", "Matricies.view", "Matricies.projection", "Matricies.normal", "Matricies.viewPort"};
     const GLchar* lightNames[]      = {"Light.diffuse", "Light.specular", "Light.ambient", "Light.position"};
     const GLchar* materialNames[]   = {"Material.diffuse", "Material.specular", "Material.shininess", "Material.ambient"};
-    const GLchar* fluidNames[]      = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.timestamp", "FluidDynamics.supportRadius", "FluidDynamics.time", "FluidDynamics.maxNeighbors"};
+    const GLchar* fluidNames[]      = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.supportRadius", "FluidDynamics.time", "FluidDynamics.maxNeighbors"};
 
     // get block offsets
     matriciesUniformBuffer.offsets  = phongProgram->getUniformBlockOffsets("Matricies", matrixNames);
@@ -557,8 +556,8 @@ void setupBuffers() {
     glBindBufferBase(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockBinding, fluidUniformBuffer.handle);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[0], sizeof(GLuint), &MAX_PARTICLES);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[1], sizeof(GLuint), &HASH_MAP_SIZE);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &SUPPORT_RADIUS);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[5], sizeof(GLuint), &MAX_NEIGHBORS);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLfloat), &SUPPORT_RADIUS);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLuint), &MAX_NEIGHBORS);
     glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(), fluidUpdateProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
 
     //------------ END UBOS ----------
@@ -964,7 +963,6 @@ void renderScene( GLFWwindow *window ) {
     double time = glfwGetTime();
     double dt = time - lastTime;
     lastTime = time;
-    timestamp ++;
 
     /***** MATRICES *****/
 	// query our current window size, determine the aspect ratio, and set our viewport size
@@ -1030,8 +1028,7 @@ void renderScene( GLFWwindow *window ) {
 
     // Buffer uniform data
     glBindBuffer(GL_UNIFORM_BUFFER, fluidUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLuint), &timestamp);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLfloat), &time);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &time);
 
     /// Compute Neighbors
 
