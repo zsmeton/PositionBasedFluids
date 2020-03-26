@@ -1,8 +1,8 @@
 #version 430 core
 
 // ***** VERTEX SHADER INPUT *****
-layout(location=0) in vec4 vPos;
-layout(location=1) in vec4 color;
+layout(location=1) in vec4 vPos;
+layout(location=3) in vec4 color;
 
 
 // ***** VERTEX SHADER OUTPUT *****

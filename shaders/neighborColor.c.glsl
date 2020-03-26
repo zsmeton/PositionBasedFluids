@@ -10,25 +10,26 @@ struct NodeType {
 };
 
 // ***** COMPUTE SHADER BUFFERS *****
-layout(std430, binding=0) buffer Positions {
+layout(std430, binding=1) buffer Positions {
     vec4 positions [];
 };
 
-layout(std430, binding=1) buffer Colors {
+layout(std430, binding=6) buffer Colors {
     vec4 colors [];
 };
 
-layout(std430, binding=4) buffer Hash {
+layout(std430, binding=7) buffer Hash {
     uint hashMap[];
 };
 
-layout(std430, binding=5) buffer LinkedList {
+layout(std430, binding=8) buffer LinkedList {
     NodeType nodes[];
 };
 
 // ***** COMPUTE SHADER UNIFORMS *****
 layout(shared, binding = 4) uniform FluidDynamics {
     uint maxParticles;
+    uint maxNeighbors;
     uint mapSize;
     uint timestamp;
     float supportRadius;

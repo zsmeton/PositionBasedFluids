@@ -27,6 +27,7 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <iostream>
 
 #include <deque>
 
@@ -91,6 +92,7 @@ double lastTime;
 const int WORK_GROUP_SIZE = 1536;
 const uint MAX_PARTICLES = WORK_GROUP_SIZE*10;
 const uint HASH_MAP_SIZE = MAX_PARTICLES;
+const uint MAX_NEIGHBORS = 1000;
 const float SUPPORT_RADIUS = 2.0;
 uint timestamp = 1;
 
@@ -107,8 +109,7 @@ glm::vec3 upVector(    0.0f,  1.0f,  0.0f );
 
 CSCI444::ShaderProgram *phongProgram = NULL;
 CSCI444::ShaderProgram *particleProgram = NULL;
-CSCI444::ShaderProgram *neighborProgram = NULL;
-CSCI444::ShaderProgram *neighborColorProgram = NULL;
+CSCI444::ShaderProgram *fluidUpdateProgram = NULL;
 
 /// DATA ///
 
@@ -145,36 +146,53 @@ struct GroundShaderAttributeLocations {
 }grndShaderAttribLocs;
 
 struct ParticleShaderAttributeLocations {
-    GLint position = 0;
-    GLint color = 1;
+    GLint index = 0;
+    GLint position = 1;
     GLint velocity = 2;
-    GLint index = 3;
+    GLint color = 3;
 }particleShaderAttribLocs;
 
 // SSBOS and Textures
+/*
+ * Index
+ * Position (old and new for ping ponging)
+ * Velocity
+ * Lambda
+ * Delta P
+ * Neighbors
+ * Color
+ */
 struct ParticleSSBOS {
-    GLuint position;
-    GLuint color;
     GLuint index;
+    GLuint position;
+    GLuint positionStar;
     GLuint velocity;
+    GLuint lambda;
+    GLuint deltaP;
+    GLuint color;
 }particleSSBOs;
 
 struct NeighborSSBOS{
     GLuint counter;
     GLuint hashMap;
     GLuint linkedList;
+    GLuint neighborData;
     GLuint hashClear;
     GLuint listClear;
 } neighborSSBOs;
 
 struct FluidSSBOLocations {
-    GLint position = 0;
-    GLint color = 1;
-    GLint velocity = 2;
-    GLint index = 3;
+    GLint index = 0;
+    GLint position = 1;
+    GLint positionStar = 2;
+    GLint velocity = 3;
+    GLint lambda = 4;
+    GLint deltaP = 5;
+    GLint color = 6;
+    GLint hashMap = 7;
+    GLint linkedList = 8;
+    GLint neighbors = 9;
     GLint counter = 0;
-    GLint hashMap = 4;
-    GLint linkedList = 5;
 }fluidSSBOLocs;
 
 struct NeighborTextures{
@@ -195,17 +213,23 @@ struct HashType {
     uint headNodeIndex;
 };
 
+struct NeighborType {
+    uint count;
+    uint neighboring[MAX_NEIGHBORS];
+};
+
 struct ParticleData{
-    Float4 position[MAX_PARTICLES];
-    Float4 color[MAX_PARTICLES];
-    Float4 velocity[MAX_PARTICLES];
     GLuint idx[MAX_PARTICLES];
+    Float4 position[MAX_PARTICLES];
+    Float4 velocity[MAX_PARTICLES];
+    Float4 color[MAX_PARTICLES];
 } particleData;
 
 HashType hashMap[HASH_MAP_SIZE];
 HashType hashClear[HASH_MAP_SIZE];
 NodeType linkedList[MAX_PARTICLES];
 NodeType listClear[MAX_PARTICLES];
+NeighborType neighborData[MAX_PARTICLES];
 
 // Textures
 FT_Face face;
@@ -402,10 +426,8 @@ void setupShaders() {
     phongProgram = new CSCI444::ShaderProgram(phongShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
     const char* particleShaderFilenames [] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
     particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
-    const char* neighborShaderFilenames [] = {"shaders/neighbor.v.glsl"};
-    neighborProgram = new CSCI444::ShaderProgram(neighborShaderFilenames, GL_VERTEX_SHADER_BIT);
-    const char* colorShaderFilenames [] = {"shaders/neighborColor.c.glsl"};
-    neighborColorProgram = new CSCI444::ShaderProgram(colorShaderFilenames, GL_COMPUTE_SHADER_BIT);
+    const char* hashShaderFilenames [] = {"shaders/fluidUpdate.glsl"};
+    fluidUpdateProgram = new CSCI444::ShaderProgram(hashShaderFilenames, GL_VERTEX_SHADER_BIT);
 
     // Query all of our subroutine indices
     phongSubroutines.phong              = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "phong");
@@ -457,6 +479,13 @@ void setupParticleData(){
     for(auto & i : listClear){
         i = {0xffffffff, 0xffffffff};
     }
+    // setup neighbor data
+    for(auto & i : neighborData){
+        for(unsigned int & j : i.neighboring){
+            j = 0xffffffff;
+        }
+        i.count = 0;
+    }
 }
 
 // load in our model data to VAOs and VBOs
@@ -476,19 +505,19 @@ void setupBuffers() {
     const GLchar* matrixNames[]     = {"Matricies.modelView", "Matricies.view", "Matricies.projection", "Matricies.normal", "Matricies.viewPort"};
     const GLchar* lightNames[]      = {"Light.diffuse", "Light.specular", "Light.ambient", "Light.position"};
     const GLchar* materialNames[]   = {"Material.diffuse", "Material.specular", "Material.shininess", "Material.ambient"};
-    const GLchar* fluidNames[]      = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.timestamp", "FluidDynamics.supportRadius", "FluidDynamics.time"};
+    const GLchar* fluidNames[]      = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.timestamp", "FluidDynamics.supportRadius", "FluidDynamics.time", "FluidDynamics.maxNeighbors"};
 
     // get block offsets
     matriciesUniformBuffer.offsets  = phongProgram->getUniformBlockOffsets("Matricies", matrixNames);
     lightUniformBuffer.offsets      = phongProgram->getUniformBlockOffsets("Light", lightNames);
     materialUniformBuffer.offsets   = phongProgram->getUniformBlockOffsets("Material", materialNames);
-    fluidUniformBuffer.offsets      = neighborColorProgram->getUniformBlockOffsets("FluidDynamics", fluidNames);
+    fluidUniformBuffer.offsets      = fluidUpdateProgram->getUniformBlockOffsets("FluidDynamics", fluidNames);
 
     // get block size
     matriciesUniformBuffer.blockSize  = phongProgram->getUniformBlockSize("Matricies");
     lightUniformBuffer.blockSize      = phongProgram->getUniformBlockSize("Light");
     materialUniformBuffer.blockSize   = phongProgram->getUniformBlockSize("Material");
-    fluidUniformBuffer.blockSize      = neighborColorProgram->getUniformBlockSize("FluidDynamics");
+    fluidUniformBuffer.blockSize      = fluidUpdateProgram->getUniformBlockSize("FluidDynamics");
 
     // Create UBO buffers and bind
     // Matrix Buffer
@@ -501,7 +530,7 @@ void setupBuffers() {
     // Set block binding and buffer base for each program that uses the buffer
     glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
     glUniformBlockBinding(particleProgram->getShaderProgramHandle(), particleProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
-    glUniformBlockBinding(neighborProgram->getShaderProgramHandle(), neighborProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
+    glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(), fluidUpdateProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
 
     // Light Buffer
     glGenBuffers(1, &lightUniformBuffer.handle);
@@ -529,19 +558,31 @@ void setupBuffers() {
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[0], sizeof(GLuint), &MAX_PARTICLES);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[1], sizeof(GLuint), &HASH_MAP_SIZE);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &SUPPORT_RADIUS);
-    glUniformBlockBinding(neighborProgram->getShaderProgramHandle(), neighborProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
-    glUniformBlockBinding(neighborColorProgram->getShaderProgramHandle(), neighborColorProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[5], sizeof(GLuint), &MAX_NEIGHBORS);
+    glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(), fluidUpdateProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
 
     //------------ END UBOS ----------
 
     //------------ START SSBOs --------
+    /// Index SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &particleSSBOs.index);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.index);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.index, particleSSBOs.index);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    GLint bufMask = GL_MAP_WRITE_BIT;
+    GLuint *indices = (GLuint *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint) * MAX_PARTICLES, bufMask );
+    for( int i = 0; i < MAX_PARTICLES; i++ ){
+        indices[i] = particleData.idx[i];
+    }
+    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+
     /// Position SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &particleSSBOs.position);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.position);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.position, particleSSBOs.position);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    GLint bufMask = GL_MAP_WRITE_BIT;
     Float4 *positions = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
     for( int i = 0; i < MAX_PARTICLES; i++ ){
         positions[i].x = particleData.position[i].x;
@@ -550,17 +591,17 @@ void setupBuffers() {
     }
     glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
 
-    /// Color SSBO
+    /// Updated Position SSBO
     // generate, bind, and buffer data
-    glGenBuffers(1, &particleSSBOs.color);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.color);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.color, particleSSBOs.color);
+    glGenBuffers(1, &particleSSBOs.positionStar);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.positionStar);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.positionStar, particleSSBOs.positionStar);
     glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    Float4 *colors = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
+    Float4 *positionStars = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
     for( int i = 0; i < MAX_PARTICLES; i++ ){
-        colors[i].x = particleData.color[i].x;
-        colors[i].y = particleData.color[i].y;
-        colors[i].z = particleData.color[i].z;
+        positionStars[i].x = particleData.position[i].x;
+        positionStars[i].y = particleData.position[i].y;
+        positionStars[i].z = particleData.position[i].z;
     }
     glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
 
@@ -578,15 +619,31 @@ void setupBuffers() {
     }
     glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
 
-    /// Index SSBO
+    /// Lamda SSBO
     // generate, bind, and buffer data
-    glGenBuffers(1, &particleSSBOs.index);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.index);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.index, particleSSBOs.index);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    GLuint *indices = (GLuint *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint) * MAX_PARTICLES, bufMask );
+    glGenBuffers(1, &particleSSBOs.lambda);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.lambda);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.lambda, particleSSBOs.lambda);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+
+    /// Delta P SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &particleSSBOs.deltaP);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.deltaP);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.deltaP, particleSSBOs.deltaP);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+
+    /// Color SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &particleSSBOs.color);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.color);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.color, particleSSBOs.color);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    Float4 *colors = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
     for( int i = 0; i < MAX_PARTICLES; i++ ){
-        indices[i] = particleData.idx[i];
+        colors[i].x = particleData.color[i].x;
+        colors[i].y = particleData.color[i].y;
+        colors[i].z = particleData.color[i].z;
     }
     glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
 
@@ -615,6 +672,13 @@ void setupBuffers() {
     glGenBuffers(1, &neighborSSBOs.listClear);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
     glBufferData(GL_COPY_READ_BUFFER, sizeof(NodeType)*MAX_PARTICLES, listClear, GL_STATIC_COPY);
+
+    /// Neighbor Data SSBO
+    // generate, bind, and buffer data
+    glGenBuffers(1, &neighborSSBOs.neighborData);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.neighbors, neighborSSBOs.neighborData);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NeighborType)*MAX_PARTICLES, neighborData, GL_DYNAMIC_COPY);
 
     /// Atomic SSBO
     // generate, bind, and buffer data
@@ -702,7 +766,6 @@ void setupBuffers() {
     glEnableVertexAttribArray(grndShaderAttribLocs.normal );
     // map the normal attribute to data within our buffer
     glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*)(3 * sizeof(float)) );
-
     //------------  END  GROUND VAO------------
 }
 
@@ -828,7 +891,24 @@ void debugSpacialHash(){
            ic++;
        }
    }
-   printf("Infinite Loops Found In Linked List: %d\n\n", ic);
+   printf("Infinite Loops Found In Linked List: %d\n", ic);
+}
+
+void debugNeighborFind(){
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
+    GLint bufMask = GL_MAP_READ_BIT;
+    NeighborType* list = (NeighborType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(NeighborType)*MAX_PARTICLES, bufMask );
+    int invalidCount = 0, maxCount = 0;
+    for( int i = 0; i < MAX_PARTICLES; i++ ) {
+        if(list[i].count > MAX_NEIGHBORS){
+            invalidCount++;
+        }else if(list[i].count == MAX_NEIGHBORS){
+            maxCount++;
+        }
+    }
+    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    printf("Invalid Neighbor Counts: %d\n", invalidCount);
+    printf("Max Neighbor Counts: %d\n\n", maxCount);
 }
 
 //*************************************************************************************
@@ -909,11 +989,11 @@ void renderScene( GLFWwindow *window ) {
     glm::mat4 nMtx = glm::transpose(glm::inverse(mvMtx));
 
     // compute perspective and view for neighbor/ signed distance field rendering
-    //glm::mat4 opMtx, ovMtx;
-    //opMtx = glm::ortho(-1000.0, 1000.0, -1000.0, 1000.0, 0.01, 1000.0);
-    //ovMtx = glm::lookAt(glm::vec3(0.0,500.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
+    glm::mat4 opMtx, ovMtx;
+    opMtx = glm::ortho(-1000.0, 1000.0, -1000.0, 1000.0, 0.01, 1000.0);
+    ovMtx = glm::lookAt(glm::vec3(0.0,500.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
     // precompute this modelview matrix
-    //glm::mat4 omvMtx = ovMtx * mMtx;
+    glm::mat4 omvMtx = ovMtx * mMtx;
 
     // Matricies
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
@@ -939,12 +1019,14 @@ void renderScene( GLFWwindow *window ) {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.hashClear);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(GLuint)*HASH_MAP_SIZE);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
-    glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
-    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(NodeType)*MAX_PARTICLES);
     GLuint zero = 0;
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
     glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &zero);
+
+    // Ping Pong position data
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.position);
+    glBindBuffer(GL_COPY_READ_BUFFER, particleSSBOs.positionStar);
+    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(Float4)*MAX_PARTICLES);
 
     // Buffer uniform data
     glBindBuffer(GL_UNIFORM_BUFFER, fluidUniformBuffer.handle);
@@ -952,13 +1034,15 @@ void renderScene( GLFWwindow *window ) {
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLfloat), &time);
 
     /// Compute Neighbors
-    // Set ortho matricies
-    //glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
-    //glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(omvMtx)[0][0]);
-    //glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(ovMtx)[0][0]);
-    //glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(opMtx)[0][0]);
 
-    neighborProgram->useProgram();
+    // Set ortho matricies
+    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(omvMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(ovMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(opMtx)[0][0]);
+
+    // Hash
+    fluidUpdateProgram->useProgram();
 
     glBindVertexArray( vaods[PARTICLES] );
     glEnable( GL_RASTERIZER_DISCARD ); // Disable rasterizing
@@ -968,12 +1052,13 @@ void renderScene( GLFWwindow *window ) {
 
     #if DEBUG
     debugSpacialHash();
+    debugNeighborFind();
     #endif
 
     /// Compute color based on neighbors
-    neighborColorProgram->useProgram();
-    glDispatchCompute(MAX_PARTICLES / WORK_GROUP_SIZE, 1, 1);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    //neighborColorProgram->useProgram();
+    //glDispatchCompute(MAX_PARTICLES / WORK_GROUP_SIZE, 1, 1);
+    //glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
 
     /// Draw particles
@@ -1148,8 +1233,7 @@ int main( int argc, char *argv[] ) {
 	// delete our shader programs
 	delete phongProgram;
 	delete textShaderProgram;
-	delete neighborProgram;
-	delete neighborColorProgram;
+	delete fluidUpdateProgram;
     delete particleProgram;
 
 	// SUCCESS!!
