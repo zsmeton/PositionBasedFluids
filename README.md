@@ -18,4 +18,5 @@ todo
     - some transparency
 
 #### NITTY GRITTY TODOS
+- Precompute Smoothing Kernel Scaling Factors
 - Create struct to store block binding locations

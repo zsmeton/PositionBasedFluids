@@ -44,33 +44,33 @@
 // Structure definitions
 
 struct Vertex {
-	GLfloat px, py, pz;	// point location x,y,z
-	GLfloat nx, ny, nz;	// normals x,y,z
+    GLfloat px, py, pz;    // point location x,y,z
+    GLfloat nx, ny, nz;    // normals x,y,z
 };
 
 // specify our Ground Vertex Information
 const Vertex groundVertices[] = {
-		{ -15.0f, -5.0f, -15.0f, 0.0f, 1.0f, 0.0f }, // 0 - BL
-		{  15.0f, -5.0f, -15.0f, 0.0f, 1.0f, 0.0f }, // 1 - BR
-		{  15.0f, -5.0f,  15.0f, 0.0f, 1.0f, 0.0f }, // 2 - TR
-		{ -15.0f, -5.0f,  15.0f, 0.0f, 1.0f, 0.0f }  // 3 - TL
+        {-15.0f, -5.0f, -15.0f, 0.0f, 1.0f, 0.0f}, // 0 - BL
+        {15.0f,  -5.0f, -15.0f, 0.0f, 1.0f, 0.0f}, // 1 - BR
+        {15.0f,  -5.0f, 15.0f,  0.0f, 1.0f, 0.0f}, // 2 - TR
+        {-15.0f, -5.0f, 15.0f,  0.0f, 1.0f, 0.0f}  // 3 - TL
 };
 // specify our Ground Index Ordering
 const GLushort groundIndices[] = {
-	0, 2, 1, 0, 3, 2
+        0, 2, 1, 0, 3, 2
 };
 
 struct character_info {
-  GLfloat ax; // advance.x
-  GLfloat ay; // advance.y
+    GLfloat ax; // advance.x
+    GLfloat ay; // advance.y
 
-  GLfloat bw; // bitmap.width;
-  GLfloat bh; // bitmap.rows;
+    GLfloat bw; // bitmap.width;
+    GLfloat bh; // bitmap.rows;
 
-  GLfloat bl; // bitmap_left;
-  GLfloat bt; // bitmap_top;
+    GLfloat bl; // bitmap_left;
+    GLfloat bt; // bitmap_top;
 
-  GLfloat tx; // x offset of glyph in texture coordinates
+    GLfloat tx; // x offset of glyph in texture coordinates
 } font_characters[128];
 
 
@@ -79,58 +79,74 @@ struct character_info {
 // Global Parameters
 
 /// CONFIGURATIONS ///
-// Materials
-MaterialSettings matReader;
-const string FLOOR_MATERIAL     = "obsidian";
-const string LIGHT_MATERIAL      = "white_light";
-// Lighting
-glm::vec3 lightPos = glm::vec3(6, 10, 1);
-const float LIGHT_SIZE = 6.0f;
-// Simulation timing
-double lastTime;
 // Fluid Dynamics
 const int WORK_GROUP_SIZE = 1536;
-const uint MAX_PARTICLES = WORK_GROUP_SIZE*10;
-const uint HASH_MAP_SIZE = MAX_PARTICLES;
-const uint MAX_NEIGHBORS = 1000;
-const float SUPPORT_RADIUS = 2.0;
+const uint NUM_PARTICLES = WORK_GROUP_SIZE * 1; // S
+const uint HASH_MAP_SIZE = 2*NUM_PARTICLES;
+const uint MAX_NEIGHBORS = 500;
+
+// Source: http://graphics.stanford.edu/courses/cs348c/PA1_PBF2016/index.html
+const uint SUBSTEPS = 2;
+const uint SOLVER_ITERS = 2;
+const float REST_DENSITY = 6378.0;
+const float SUPPORT_RADIUS = 0.1;
+const float EPSILON = 600.0;
+const float MIN_TIMESTEP = 0.0083;
+const float COLLISION_EPSILON = 0.0001;
+const float KPOLY = (315.0 / (64.0 * M_PI * pow(SUPPORT_RADIUS, 9)));
+const float KSPIKY = 45.0 / (M_PI * pow(SUPPORT_RADIUS, 6));
+
+// Materials
+MaterialSettings matReader;
+const string FLOOR_MATERIAL = "obsidian";
+const string LIGHT_MATERIAL = "white_light";
+
+// Lighting
+const float LIGHT_SIZE = 6.0f;
+
 
 /// OTHER PARAMS ///
 GLint windowWidth, windowHeight;
 GLboolean shiftDown = false;
 GLboolean leftMouseDown = false;
-glm::vec2 mousePosition( -9999.0f, -9999.0f );
+glm::vec2 mousePosition(-9999.0f, -9999.0f);
 
-glm::vec3 cameraAngles( 1.82f, 2.01f, 15.0f );
-glm::vec3 eyePoint(   10.0f, 10.0f, 10.0f );
-glm::vec3 lookAtPoint( 0.0f,  0.0f,  0.0f );
-glm::vec3 upVector(    0.0f,  1.0f,  0.0f );
+glm::vec3 cameraAngles(1.82f, 2.01f, 15.0f);
+glm::vec3 eyePoint(10.0f, 10.0f, 10.0f);
+glm::vec3 lookAtPoint(0.0f, 0.0f, 0.0f);
+glm::vec3 upVector(0.0f, 1.0f, 0.0f);
+
+// Lighting
+glm::vec3 lightPos = glm::vec3(6, 10, 1);
+
+// Simulation timing
+double lastTime;
+
+/// SHADER PROGRAMS ///
 
 CSCI444::ShaderProgram *phongProgram = NULL;
 CSCI444::ShaderProgram *particleProgram = NULL;
 CSCI444::ShaderProgram *fluidUpdateProgram = NULL;
 
 /// DATA ///
-
 // VAO/VBOs
 const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2;
 GLuint vaods[3];
 GLuint lightVbod;
 
-
 // Subroutines
-struct PhongSubroutines{
+struct PhongSubroutines {
     GLuint setting;
     GLuint phong;
     GLuint blinnPhong;
-}phongSubroutines;
+} phongSubroutines;
 
 // UBOS
-struct ShaderUniformBuffer{
+struct ShaderUniformBuffer {
     GLuint blockBinding;
     GLuint handle;
     GLint blockSize;
-    GLint* offsets;
+    GLint *offsets;
 };
 
 ShaderUniformBuffer matriciesUniformBuffer;
@@ -140,16 +156,16 @@ ShaderUniformBuffer fluidUniformBuffer;
 
 // LOCATIONS
 struct GroundShaderAttributeLocations {
-	GLint position = 0;
-	GLint normal = 1;
-}grndShaderAttribLocs;
+    GLint position = 0;
+    GLint normal = 1;
+} grndShaderAttribLocs;
 
 struct ParticleShaderAttributeLocations {
     GLint index = 0;
     GLint position = 1;
     GLint velocity = 2;
     GLint color = 3;
-}particleShaderAttribLocs;
+} particleShaderAttribLocs;
 
 // SSBOS and Textures
 /*
@@ -167,11 +183,10 @@ struct ParticleSSBOS {
     GLuint positionStar;
     GLuint velocity;
     GLuint lambda;
-    GLuint deltaP;
     GLuint color;
-}particleSSBOs;
+} particleSSBOs;
 
-struct NeighborSSBOS{
+struct NeighborSSBOS {
     GLuint counter;
     GLuint hashMap;
     GLuint linkedList;
@@ -186,21 +201,20 @@ struct FluidSSBOLocations {
     GLint positionStar = 2;
     GLint velocity = 3;
     GLint lambda = 4;
-    GLint deltaP = 5;
     GLint color = 6;
     GLint hashMap = 7;
     GLint linkedList = 8;
     GLint neighbors = 9;
     GLint counter = 0;
-}fluidSSBOLocs;
+} fluidSSBOLocs;
 
-struct NeighborTextures{
+struct NeighborTextures {
     GLuint hashMap;
 } neighborTexs;
 
 // Particle Structs and Data
 struct Float4 {
-    float x,y,z,w;
+    float x, y, z, w;
 };
 
 struct NodeType {
@@ -217,20 +231,20 @@ struct NeighborType {
     uint neighboring[MAX_NEIGHBORS];
 };
 
-struct ParticleData{
-    GLuint idx[MAX_PARTICLES];
-    Float4 position[MAX_PARTICLES];
-    Float4 velocity[MAX_PARTICLES];
-    Float4 color[MAX_PARTICLES];
+struct ParticleData {
+    GLuint idx[NUM_PARTICLES];
+    glm::vec4 position[NUM_PARTICLES];
+    glm::vec4 velocity[NUM_PARTICLES];
+    glm::vec4 color[NUM_PARTICLES];
 } particleData;
 
 HashType hashMap[HASH_MAP_SIZE];
 HashType hashClear[HASH_MAP_SIZE];
-NodeType linkedList[MAX_PARTICLES];
-NodeType listClear[MAX_PARTICLES];
-NeighborType neighborData[MAX_PARTICLES];
+NodeType linkedList[NUM_PARTICLES];
+NodeType listClear[NUM_PARTICLES];
+NeighborType neighborData[NUM_PARTICLES];
 
-// Textures
+/// TEXT ///
 FT_Face face;
 GLuint font_texture_handle, text_vao_handle, text_vbo_handle;
 GLint atlas_width, atlas_height;
@@ -238,26 +252,26 @@ GLint atlas_width, atlas_height;
 CSCI444::ShaderProgram *textShaderProgram = NULL;
 
 struct TextShaderUniformLocations {
-	GLint text_color_location;
-	GLint text_mvp_location;
+    GLint text_color_location;
+    GLint text_mvp_location;
 } textShaderUniformLocs;
 
 struct TextShaderAttributeLocations {
-	GLint text_texCoord_location;
+    GLint text_texCoord_location;
 } textShaderAttribLocs;
 
 GLboolean mackHack = false;
 
-/// CONTROLS
+/// CONTROLS ///
 bool keys[348];
 
 //*************************************************************************************
 
 // Helper Funcs
 void convertSphericalToCartesian() {
-	eyePoint.x = cameraAngles.z * sinf( cameraAngles.x ) * sinf( cameraAngles.y );
-	eyePoint.y = cameraAngles.z * -cosf( cameraAngles.y );
-	eyePoint.z = cameraAngles.z * -cosf( cameraAngles.x ) * sinf( cameraAngles.y );
+    eyePoint.x = cameraAngles.z * sinf(cameraAngles.x) * sinf(cameraAngles.y);
+    eyePoint.y = cameraAngles.z * -cosf(cameraAngles.y);
+    eyePoint.z = cameraAngles.z * -cosf(cameraAngles.x) * sinf(cameraAngles.y);
 }
 
 //*************************************************************************************
@@ -265,20 +279,20 @@ void convertSphericalToCartesian() {
 // GLFW Event Callbacks
 
 // print errors from GLFW
-static void error_callback(int error, const char* description) {
-	fprintf(stderr, "[ERROR]: %s\n", description);
+static void error_callback(int error, const char *description) {
+    fprintf(stderr, "[ERROR]: %s\n", description);
 }
 
 // handle key events
-static void key_callback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-	if ((key == GLFW_KEY_ESCAPE || key == 'Q') && action == GLFW_PRESS) {
-		glfwSetWindowShouldClose( window, GLFW_TRUE );
-	} else if(key == GLFW_KEY_LEFT_SHIFT && action == GLFW_PRESS) {
-		shiftDown = true;
-	} else if(key == GLFW_KEY_LEFT_SHIFT && action == GLFW_RELEASE) {
-		shiftDown = false;
-	}
-	if(action == GLFW_PRESS) {
+static void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods) {
+    if ((key == GLFW_KEY_ESCAPE || key == 'Q') && action == GLFW_PRESS) {
+        glfwSetWindowShouldClose(window, GLFW_TRUE);
+    } else if (key == GLFW_KEY_LEFT_SHIFT && action == GLFW_PRESS) {
+        shiftDown = true;
+    } else if (key == GLFW_KEY_LEFT_SHIFT && action == GLFW_RELEASE) {
+        shiftDown = false;
+    }
+    if (action == GLFW_PRESS) {
         switch (key) {
             case GLFW_KEY_1:
                 // Use phong illumination
@@ -293,65 +307,65 @@ static void key_callback(GLFWwindow* window, int key, int scancode, int action, 
 }
 
 // handle mouse clicks
-static void mouseClick_callback(GLFWwindow* window, int button, int action, int mods) {
-	if( button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS ) {
-		leftMouseDown = true;
-	} else {
-		leftMouseDown = false;
-		mousePosition.x = -9999.0f;
-		mousePosition.y = -9999.0f;
-	}
+static void mouseClick_callback(GLFWwindow *window, int button, int action, int mods) {
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+        leftMouseDown = true;
+    } else {
+        leftMouseDown = false;
+        mousePosition.x = -9999.0f;
+        mousePosition.y = -9999.0f;
+    }
 }
 
 // handle mouse positions
-static void mousePos_callback(GLFWwindow* window, double xpos, double ypos) {
-	// make sure movement is in bounds of the window
-	// glfw captures mouse movement on entire screen
-	if( xpos > 0 && xpos < windowWidth ) {
-		if( ypos > 0 && ypos < windowHeight ) {
-			// active motion
-			if( leftMouseDown ) {
-				if( (mousePosition.x - -9999.0f) < 0.001f ) {
-					mousePosition.x = xpos;
-					mousePosition.y = ypos;
-				} else {
-					if( !shiftDown ) {
-						cameraAngles.x += (xpos - mousePosition.x)*0.005f;
-						cameraAngles.y += (ypos - mousePosition.y)*0.005f;
+static void mousePos_callback(GLFWwindow *window, double xpos, double ypos) {
+    // make sure movement is in bounds of the window
+    // glfw captures mouse movement on entire screen
+    if (xpos > 0 && xpos < windowWidth) {
+        if (ypos > 0 && ypos < windowHeight) {
+            // active motion
+            if (leftMouseDown) {
+                if ((mousePosition.x - -9999.0f) < 0.001f) {
+                    mousePosition.x = xpos;
+                    mousePosition.y = ypos;
+                } else {
+                    if (!shiftDown) {
+                        cameraAngles.x += (xpos - mousePosition.x) * 0.005f;
+                        cameraAngles.y += (ypos - mousePosition.y) * 0.005f;
 
-						if( cameraAngles.y < 0 ) cameraAngles.y = 0.0f + 0.001f;
-						if( cameraAngles.y >= M_PI ) cameraAngles.y = M_PI - 0.001f;
-					} else {
-						double totChgSq = (xpos - mousePosition.x) + (ypos - mousePosition.y);
-						cameraAngles.z += totChgSq*0.01f;
+                        if (cameraAngles.y < 0) cameraAngles.y = 0.0f + 0.001f;
+                        if (cameraAngles.y >= M_PI) cameraAngles.y = M_PI - 0.001f;
+                    } else {
+                        double totChgSq = (xpos - mousePosition.x) + (ypos - mousePosition.y);
+                        cameraAngles.z += totChgSq * 0.01f;
 
-						if( cameraAngles.z <= 2.0f ) cameraAngles.z = 2.0f;
-						if( cameraAngles.z >= 50.0f ) cameraAngles.z = 50.0f;
-					}
-					convertSphericalToCartesian();
+                        if (cameraAngles.z <= 2.0f) cameraAngles.z = 2.0f;
+                        if (cameraAngles.z >= 50.0f) cameraAngles.z = 50.0f;
+                    }
+                    convertSphericalToCartesian();
 
 
-					mousePosition.x = xpos;
-					mousePosition.y = ypos;
-				}
-			}
-			// passive motion
-			else {
+                    mousePosition.x = xpos;
+                    mousePosition.y = ypos;
+                }
+            }
+                // passive motion
+            else {
 
-			}
-		}
-	}
+            }
+        }
+    }
 }
 
 // handle scroll events
-static void scroll_callback(GLFWwindow* window, double xOffset, double yOffset ) {
-	GLdouble totChgSq = yOffset;
-	cameraAngles.z += totChgSq*0.01f;
+static void scroll_callback(GLFWwindow *window, double xOffset, double yOffset) {
+    GLdouble totChgSq = yOffset;
+    cameraAngles.z += totChgSq * 0.01f;
 
-	if( cameraAngles.z <= 2.0f ) cameraAngles.z = 2.0f;
-	if( cameraAngles.z >= 50.0f ) cameraAngles.z = 50.0f;
-	
-	convertSphericalToCartesian();
+    if (cameraAngles.z <= 2.0f) cameraAngles.z = 2.0f;
+    if (cameraAngles.z >= 50.0f) cameraAngles.z = 50.0f;
+
+    convertSphericalToCartesian();
 }
 
 //*************************************************************************************
@@ -359,60 +373,60 @@ static void scroll_callback(GLFWwindow* window, double xOffset, double yOffset )
 // Setup Funcs
 
 // setup GLFW
-GLFWwindow* setupGLFW() {
-	glfwSetErrorCallback(error_callback);
+GLFWwindow *setupGLFW() {
+    glfwSetErrorCallback(error_callback);
 
-	if (!glfwInit()) {
-		fprintf( stderr, "[ERROR]: Could not initialize GLFW\n" );
-		exit(EXIT_FAILURE);
-	}
+    if (!glfwInit()) {
+        fprintf(stderr, "[ERROR]: Could not initialize GLFW\n");
+        exit(EXIT_FAILURE);
+    }
 
-	// create a 4.1 Core OpenGL Context
-	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    // create a 4.1 Core OpenGL Context
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
 
-	GLFWwindow *window = glfwCreateWindow(640, 480, "Water Simulator", NULL, NULL);
-	if( !window ) {
-		glfwTerminate();
-		exit(EXIT_FAILURE);
-	}
+    GLFWwindow *window = glfwCreateWindow(640, 480, "Water Simulator", NULL, NULL);
+    if (!window) {
+        glfwTerminate();
+        exit(EXIT_FAILURE);
+    }
 
-	glfwMakeContextCurrent(window);
-	glfwSwapInterval(1);
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
 
-	// register callbacks
-	glfwSetKeyCallback(window, key_callback);
-	glfwSetMouseButtonCallback(window, mouseClick_callback);
-	glfwSetCursorPosCallback(window, mousePos_callback);
-	glfwSetScrollCallback(window, scroll_callback);
+    // register callbacks
+    glfwSetKeyCallback(window, key_callback);
+    glfwSetMouseButtonCallback(window, mouseClick_callback);
+    glfwSetCursorPosCallback(window, mousePos_callback);
+    glfwSetScrollCallback(window, scroll_callback);
 
-	// return our window
-	return window;
+    // return our window
+    return window;
 }
 
 // setup OpenGL parameters
 void setupOpenGL() {
-	glEnable( GL_DEPTH_TEST );							// turn on depth testing
-	glDepthFunc( GL_LESS );								// use less than test
-	glFrontFace( GL_CCW );								// front faces are CCW
-	glEnable(GL_BLEND);									// turn on alpha blending
-	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);	// blend w/ 1-a
-	glClearColor( 0.0f, 0.0f, 0.0f, 1.0f );				// clear our screen to black
+    glEnable(GL_DEPTH_TEST);                            // turn on depth testing
+    glDepthFunc(GL_LESS);                                // use less than test
+    glFrontFace(GL_CCW);                                // front faces are CCW
+    glEnable(GL_BLEND);                                    // turn on alpha blending
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);    // blend w/ 1-a
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);                // clear our screen to black
 
-	// initialize GLEW
-	glewExperimental = GL_TRUE;
-	GLenum glewResult = glewInit();
+    // initialize GLEW
+    glewExperimental = GL_TRUE;
+    GLenum glewResult = glewInit();
 
-	// check for an error
-	if( glewResult != GLEW_OK ) {
-		printf( "[ERROR]: Error initalizing GLEW\n");
-		exit(EXIT_FAILURE);
-	}
+    // check for an error
+    if (glewResult != GLEW_OK) {
+        printf("[ERROR]: Error initalizing GLEW\n");
+        exit(EXIT_FAILURE);
+    }
 
-	// print information about our current OpenGL set up
-	CSCI441::OpenGLUtils::printOpenGLInfo();
+    // print information about our current OpenGL set up
+    CSCI441::OpenGLUtils::printOpenGLInfo();
 }
 
 // load our shaders and get locations for uniforms and attributes
@@ -420,29 +434,30 @@ void setupShaders() {
     // Set Programs to be seperable
     CSCI444::ShaderProgram::enableSeparablePrograms();
 
-	// Load our shader programs
-    const char* phongShaderFilenames [] = {"shaders/phong.v.glsl", "shaders/phong.f.glsl"};
+    // Load our shader programs
+    const char *phongShaderFilenames[] = {"shaders/phong.v.glsl", "shaders/phong.f.glsl"};
     phongProgram = new CSCI444::ShaderProgram(phongShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
-    const char* particleShaderFilenames [] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
-    particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
-    const char* hashShaderFilenames [] = {"shaders/fluidUpdate.glsl"};
+    const char *particleShaderFilenames[] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
+    particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames,
+                                                 GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
+    const char *hashShaderFilenames[] = {"shaders/fluidUpdate.glsl"};
     fluidUpdateProgram = new CSCI444::ShaderProgram(hashShaderFilenames, GL_VERTEX_SHADER_BIT);
 
     // Query all of our subroutine indices
-    phongSubroutines.phong              = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "phong");
-    phongSubroutines.blinnPhong         = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "blinnPhong");
-    phongSubroutines.setting            = phongSubroutines.phong; // set default specular shader to be pass through
+    phongSubroutines.phong = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "phong");
+    phongSubroutines.blinnPhong = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "blinnPhong");
+    phongSubroutines.setting = phongSubroutines.phong; // set default specular shader to be pass through
 
 
     // Setup text shader
-    textShaderProgram        = new CSCI444::ShaderProgram("shaders/textShaderv410.v.glsl",
-                                                          "shaders/textShaderv410.f.glsl" );
-	textShaderUniformLocs.text_color_location      = textShaderProgram->getUniformLocation( "color" );
-	textShaderUniformLocs.text_mvp_location        = textShaderProgram->getUniformLocation( "MVP_Matrix" );
-	textShaderAttribLocs.text_texCoord_location    = textShaderProgram->getAttributeLocation( "coord" );
+    textShaderProgram = new CSCI444::ShaderProgram("shaders/textShaderv410.v.glsl",
+                                                   "shaders/textShaderv410.f.glsl");
+    textShaderUniformLocs.text_color_location = textShaderProgram->getUniformLocation("color");
+    textShaderUniformLocs.text_mvp_location = textShaderProgram->getUniformLocation("MVP_Matrix");
+    textShaderAttribLocs.text_texCoord_location = textShaderProgram->getAttributeLocation("coord");
 }
 
-void setupPipelines(){
+void setupPipelines() {
     /*
     glCreateProgramPipelines(1, &pipelineGroundHandle);
     glUseProgramStages(pipelineGroundHandle, vertProgram->getShaderStages(), vertProgram->getShaderProgramHandle());
@@ -450,37 +465,40 @@ void setupPipelines(){
     */
 }
 
-void setupParticleData(){
+void setupParticleData() {
     // randomly initialize particle data
-    for(GLuint i = 0; i < MAX_PARTICLES; i++){
+    for(GLuint i = 0; i < NUM_PARTICLES; i++){
         particleData.position[i].x = ((rand() % 1000) / 100.0) - 5;
         particleData.position[i].y = ((rand() % 1000) / 100.0) - 5;
         particleData.position[i].z = ((rand() % 1000) / 100.0) - 5;
-        particleData.color[i].x = 1.0;
-        particleData.color[i].y = 1.0;
+        particleData.velocity[i].x = 0.0;
+        particleData.velocity[i].y = 0.0;
+        particleData.velocity[i].z = 0.0;
+        particleData.color[i].x = 0.0;
+        particleData.color[i].y = 0.0;
         particleData.color[i].z = 1.0;
         particleData.idx[i] = i;
     }
 
     // setup hash map
-    for(auto & i : hashMap){
+    for (auto &i : hashMap) {
         i = {0xffffffff};
     }
     // set up hash clearer
-    for(auto & i : hashClear){
+    for (auto &i : hashClear) {
         i = {0xffffffff};
     }
     // setup linked list data
-    for(auto & i : linkedList){
+    for (auto &i : linkedList) {
         i = {0xffffffff, 0xffffffff};
     }
     // setup list clearer
-    for(auto & i : listClear){
+    for (auto &i : listClear) {
         i = {0xffffffff, 0xffffffff};
     }
     // setup neighbor data
-    for(auto & i : neighborData){
-        for(unsigned int & j : i.neighboring){
+    for (auto &i : neighborData) {
+        for (unsigned int &j : i.neighboring) {
             j = 0xffffffff;
         }
         i.count = 0;
@@ -492,31 +510,35 @@ void setupBuffers() {
     // Load data in for material reader
     matReader.loadMaterials("materials.mat");
 
-	//------------ BEGIN UBOS ----------
+    //------------ BEGIN UBOS ----------
     // setup UBs
     // Set up UBO binding numbers
-    matriciesUniformBuffer.blockBinding     = 0;
-    materialUniformBuffer.blockBinding      = 1;
-    lightUniformBuffer.blockBinding         = 2;
-    fluidUniformBuffer.blockBinding         = 4;
+    matriciesUniformBuffer.blockBinding = 0;
+    materialUniformBuffer.blockBinding = 1;
+    lightUniformBuffer.blockBinding = 2;
+    fluidUniformBuffer.blockBinding = 4;
 
     // Set up UBO name orders
-    const GLchar* matrixNames[]     = {"Matricies.modelView", "Matricies.view", "Matricies.projection", "Matricies.normal", "Matricies.viewPort"};
-    const GLchar* lightNames[]      = {"Light.diffuse", "Light.specular", "Light.ambient", "Light.position"};
-    const GLchar* materialNames[]   = {"Material.diffuse", "Material.specular", "Material.shininess", "Material.ambient"};
-    const GLchar* fluidNames[]      = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.supportRadius", "FluidDynamics.time", "FluidDynamics.maxNeighbors"};
+    const GLchar *matrixNames[] = {"Matricies.modelView", "Matricies.view", "Matricies.projection", "Matricies.normal",
+                                   "Matricies.viewPort"};
+    const GLchar *lightNames[] = {"Light.diffuse", "Light.specular", "Light.ambient", "Light.position"};
+    const GLchar *materialNames[] = {"Material.diffuse", "Material.specular", "Material.shininess", "Material.ambient"};
+    const GLchar *fluidNames[] = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.supportRadius",
+                                  "FluidDynamics.dt", "FluidDynamics.maxNeighbors", "FluidDynamics.solverIters",
+                                  "FluidDynamics.restDensity", "FluidDynamics.epsilon",
+                                  "FluidDynamics.collisionEpsilon", "FluidDynamics.kpoly", "FluidDynamics.kspiky"};
 
     // get block offsets
-    matriciesUniformBuffer.offsets  = phongProgram->getUniformBlockOffsets("Matricies", matrixNames);
-    lightUniformBuffer.offsets      = phongProgram->getUniformBlockOffsets("Light", lightNames);
-    materialUniformBuffer.offsets   = phongProgram->getUniformBlockOffsets("Material", materialNames);
-    fluidUniformBuffer.offsets      = fluidUpdateProgram->getUniformBlockOffsets("FluidDynamics", fluidNames);
+    matriciesUniformBuffer.offsets = phongProgram->getUniformBlockOffsets("Matricies", matrixNames);
+    lightUniformBuffer.offsets = phongProgram->getUniformBlockOffsets("Light", lightNames);
+    materialUniformBuffer.offsets = phongProgram->getUniformBlockOffsets("Material", materialNames);
+    fluidUniformBuffer.offsets = fluidUpdateProgram->getUniformBlockOffsets("FluidDynamics", fluidNames);
 
     // get block size
-    matriciesUniformBuffer.blockSize  = phongProgram->getUniformBlockSize("Matricies");
-    lightUniformBuffer.blockSize      = phongProgram->getUniformBlockSize("Light");
-    materialUniformBuffer.blockSize   = phongProgram->getUniformBlockSize("Material");
-    fluidUniformBuffer.blockSize      = fluidUpdateProgram->getUniformBlockSize("FluidDynamics");
+    matriciesUniformBuffer.blockSize = phongProgram->getUniformBlockSize("Matricies");
+    lightUniformBuffer.blockSize = phongProgram->getUniformBlockSize("Light");
+    materialUniformBuffer.blockSize = phongProgram->getUniformBlockSize("Material");
+    fluidUniformBuffer.blockSize = fluidUpdateProgram->getUniformBlockSize("FluidDynamics");
 
     // Create UBO buffers and bind
     // Matrix Buffer
@@ -527,38 +549,54 @@ void setupBuffers() {
     // Set the UBO's base
     glBindBufferBase(GL_UNIFORM_BUFFER, matriciesUniformBuffer.blockBinding, matriciesUniformBuffer.handle);
     // Set block binding and buffer base for each program that uses the buffer
-    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
-    glUniformBlockBinding(particleProgram->getShaderProgramHandle(), particleProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
-    glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(), fluidUpdateProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding );
+    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Matricies"),
+                          matriciesUniformBuffer.blockBinding);
+    glUniformBlockBinding(particleProgram->getShaderProgramHandle(), particleProgram->getUniformBlockIndex("Matricies"),
+                          matriciesUniformBuffer.blockBinding);
+    glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(),
+                          fluidUpdateProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding);
 
     // Light Buffer
     glGenBuffers(1, &lightUniformBuffer.handle);
     glBindBuffer(GL_UNIFORM_BUFFER, lightUniformBuffer.handle);
     glBufferData(GL_UNIFORM_BUFFER, lightUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, lightUniformBuffer.blockBinding, lightUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[0], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).diffuse);
-    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[1], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).specular);
-    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[2], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).ambient);
-    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
-    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Light"), lightUniformBuffer.blockBinding );
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[0], sizeof(float) * 4,
+                    matReader.getSwatch(LIGHT_MATERIAL).diffuse);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[1], sizeof(float) * 4,
+                    matReader.getSwatch(LIGHT_MATERIAL).specular);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[2], sizeof(float) * 4,
+                    matReader.getSwatch(LIGHT_MATERIAL).ambient);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float) * 3, &(lightPos)[0]);
+    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Light"),
+                          lightUniformBuffer.blockBinding);
 
     // Material Buffer
     glGenBuffers(1, &materialUniformBuffer.handle);
     glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
     glBufferData(GL_UNIFORM_BUFFER, materialUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, materialUniformBuffer.blockBinding, materialUniformBuffer.handle);
-    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Material"), materialUniformBuffer.blockBinding );
+    glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Material"),
+                          materialUniformBuffer.blockBinding);
 
     // Fluid Buffer
     glGenBuffers(1, &fluidUniformBuffer.handle);
     glBindBuffer(GL_UNIFORM_BUFFER, fluidUniformBuffer.handle);
     glBufferData(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockSize, NULL, GL_DYNAMIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockBinding, fluidUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[0], sizeof(GLuint), &MAX_PARTICLES);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[0], sizeof(GLuint), &NUM_PARTICLES);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[1], sizeof(GLuint), &HASH_MAP_SIZE);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLfloat), &SUPPORT_RADIUS);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &MIN_TIMESTEP);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLuint), &MAX_NEIGHBORS);
-    glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(), fluidUpdateProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[5], sizeof(GLuint), &SOLVER_ITERS);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[6], sizeof(GLfloat), &REST_DENSITY);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[7], sizeof(GLfloat), &EPSILON);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[8], sizeof(GLfloat), &COLLISION_EPSILON);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[9], sizeof(GLfloat), &KPOLY);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[10], sizeof(GLfloat), &KSPIKY);
+    glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(),
+                          fluidUpdateProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
 
     //------------ END UBOS ----------
 
@@ -568,116 +606,112 @@ void setupBuffers() {
     glGenBuffers(1, &particleSSBOs.index);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.index);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.index, particleSSBOs.index);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(GLuint) * NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
     GLint bufMask = GL_MAP_WRITE_BIT;
-    GLuint *indices = (GLuint *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint) * MAX_PARTICLES, bufMask );
-    for( int i = 0; i < MAX_PARTICLES; i++ ){
+    GLuint *indices = (GLuint *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(GLuint) * NUM_PARTICLES, bufMask);
+    for (int i = 0; i < NUM_PARTICLES; i++) {
         indices[i] = particleData.idx[i];
     }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     /// Position SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &particleSSBOs.position);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.position);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.position, particleSSBOs.position);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    Float4 *positions = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
-    for( int i = 0; i < MAX_PARTICLES; i++ ){
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    Float4 *positions = (Float4 *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * NUM_PARTICLES,
+                                                    bufMask);
+    for (int i = 0; i < NUM_PARTICLES; i++) {
         positions[i].x = particleData.position[i].x;
         positions[i].y = particleData.position[i].y;
         positions[i].z = particleData.position[i].z;
     }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     /// Updated Position SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &particleSSBOs.positionStar);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.positionStar);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.positionStar, particleSSBOs.positionStar);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    Float4 *positionStars = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
-    for( int i = 0; i < MAX_PARTICLES; i++ ){
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    Float4 *positionStars = (Float4 *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * NUM_PARTICLES,
+                                                        bufMask);
+    for (int i = 0; i < NUM_PARTICLES; i++) {
         positionStars[i].x = particleData.position[i].x;
         positionStars[i].y = particleData.position[i].y;
         positionStars[i].z = particleData.position[i].z;
     }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     /// Velocity SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &particleSSBOs.velocity);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.velocity);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.velocity, particleSSBOs.velocity);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    Float4 *vels = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
-    for( int i = 0; i < MAX_PARTICLES; i++ ){
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    Float4 *vels = (Float4 *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * NUM_PARTICLES, bufMask);
+    for (int i = 0; i < NUM_PARTICLES; i++) {
         vels[i].x = particleData.velocity[i].x;
         vels[i].y = particleData.velocity[i].y;
         vels[i].z = particleData.velocity[i].z;
     }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     /// Lamda SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &particleSSBOs.lambda);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.lambda);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.lambda, particleSSBOs.lambda);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-
-    /// Delta P SSBO
-    // generate, bind, and buffer data
-    glGenBuffers(1, &particleSSBOs.deltaP);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.deltaP);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.deltaP, particleSSBOs.deltaP);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(float) * NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
 
     /// Color SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &particleSSBOs.color);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.color);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.color, particleSSBOs.color);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * MAX_PARTICLES, NULL, GL_DYNAMIC_DRAW);
-    Float4 *colors = (Float4 *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * MAX_PARTICLES, bufMask );
-    for( int i = 0; i < MAX_PARTICLES; i++ ){
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4 * sizeof(float) * NUM_PARTICLES, NULL, GL_DYNAMIC_DRAW);
+    Float4 *colors = (Float4 *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, 4 * sizeof(float) * NUM_PARTICLES,
+                                                 bufMask);
+    for (int i = 0; i < NUM_PARTICLES; i++) {
         colors[i].x = particleData.color[i].x;
         colors[i].y = particleData.color[i].y;
         colors[i].z = particleData.color[i].z;
     }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
     /// Hash SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.hashMap);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.hashMap, neighborSSBOs.hashMap);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(HashType)*HASH_MAP_SIZE, NULL, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(HashType) * HASH_MAP_SIZE, NULL, GL_DYNAMIC_COPY);
 
     /// HashClear SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.hashClear);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.hashClear);
-    glBufferData(GL_COPY_READ_BUFFER, sizeof(HashType)*HASH_MAP_SIZE, hashClear, GL_STATIC_COPY);
+    glBufferData(GL_COPY_READ_BUFFER, sizeof(HashType) * HASH_MAP_SIZE, hashClear, GL_STATIC_COPY);
 
     /// Linked List SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.linkedList);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.linkedList, neighborSSBOs.linkedList);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NodeType)*MAX_PARTICLES, listClear, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NodeType) * NUM_PARTICLES, listClear, GL_DYNAMIC_COPY);
 
     /// ListClear SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.listClear);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
-    glBufferData(GL_COPY_READ_BUFFER, sizeof(NodeType)*MAX_PARTICLES, listClear, GL_STATIC_COPY);
+    glBufferData(GL_COPY_READ_BUFFER, sizeof(NodeType) * NUM_PARTICLES, listClear, GL_STATIC_COPY);
 
     /// Neighbor Data SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.neighborData);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.neighbors, neighborSSBOs.neighborData);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NeighborType)*MAX_PARTICLES, neighborData, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NeighborType) * NUM_PARTICLES, neighborData, GL_DYNAMIC_COPY);
 
     /// Atomic SSBO
     // generate, bind, and buffer data
@@ -690,224 +724,246 @@ void setupBuffers() {
     //------------ END SSBOs --------
 
     // generate our vertex array object descriptors
-    glGenVertexArrays( 3, vaods );
+    glGenVertexArrays(3, vaods);
     // will be used to store VBO descriptors for ARRAY_BUFFER and ELEMENT_ARRAY_BUFFER
     GLuint vbods[2];
 
     //------------ BEGIN PARTICLE VAO ------------
     // generate our vertex buffer object descriptors for the GROUND
-    glBindVertexArray( vaods[PARTICLES] );
+    glBindVertexArray(vaods[PARTICLES]);
     // bind the VBO to our particle position ssbo
-    glBindBuffer( GL_ARRAY_BUFFER, particleSSBOs.position );
+    glBindBuffer(GL_ARRAY_BUFFER, particleSSBOs.position);
     // enable our position attribute
-    glEnableVertexAttribArray(particleShaderAttribLocs.position );
+    glEnableVertexAttribArray(particleShaderAttribLocs.position);
     // map the position attribute to data within our buffer
-    glVertexAttribPointer(particleShaderAttribLocs.position, 4, GL_FLOAT, GL_FALSE, 0, (void*) 0 );
+    glVertexAttribPointer(particleShaderAttribLocs.position, 4, GL_FLOAT, GL_FALSE, 0, (void *) 0);
     // bind the VBO to our particle color ssbo
-    glBindBuffer( GL_ARRAY_BUFFER, particleSSBOs.color );
+    glBindBuffer(GL_ARRAY_BUFFER, particleSSBOs.color);
     // enable our color attribute
-    glEnableVertexAttribArray(particleShaderAttribLocs.color );
+    glEnableVertexAttribArray(particleShaderAttribLocs.color);
     // map the color attribute to data within our buffer
-    glVertexAttribPointer(particleShaderAttribLocs.color, 4, GL_FLOAT, GL_FALSE, 0, (void*) 0 );
+    glVertexAttribPointer(particleShaderAttribLocs.color, 4, GL_FLOAT, GL_FALSE, 0, (void *) 0);
     // bind the VBO to our particle velocity ssbo
-    glBindBuffer( GL_ARRAY_BUFFER, particleSSBOs.velocity );
+    glBindBuffer(GL_ARRAY_BUFFER, particleSSBOs.velocity);
     // enable our velocity attribute
-    glEnableVertexAttribArray(particleShaderAttribLocs.velocity );
+    glEnableVertexAttribArray(particleShaderAttribLocs.velocity);
     // map the velocity attribute to data within our buffer
-    glVertexAttribPointer(particleShaderAttribLocs.velocity, 4, GL_FLOAT, GL_FALSE, 0, (void*) 0 );
+    glVertexAttribPointer(particleShaderAttribLocs.velocity, 4, GL_FLOAT, GL_FALSE, 0, (void *) 0);
     // bind the VBO to our particle index ssbo
-    glBindBuffer( GL_ARRAY_BUFFER, particleSSBOs.index );
+    glBindBuffer(GL_ARRAY_BUFFER, particleSSBOs.index);
     // enable our index attribute
-    glEnableVertexAttribArray(particleShaderAttribLocs.index );
+    glEnableVertexAttribArray(particleShaderAttribLocs.index);
     // map the index attribute to data within our buffer
-    glVertexAttribIPointer(particleShaderAttribLocs.index, 1, GL_UNSIGNED_INT, 0, (void*) 0 );
+    glVertexAttribIPointer(particleShaderAttribLocs.index, 1, GL_UNSIGNED_INT, 0, (void *) 0);
     //------------  END  PARTICLE VAO------------
 
     //------------ BEGIN LIGHT VAO ------------
     // Draw Ground
-    glBindVertexArray( vaods[LIGHT] );
+    glBindVertexArray(vaods[LIGHT]);
 
     // generate our vertex buffer object descriptors for the LIGHT
-    glGenBuffers( 1, &lightVbod );
+    glGenBuffers(1, &lightVbod);
     // bind the VBO for our Ground Array Buffer
-    glBindBuffer( GL_ARRAY_BUFFER, lightVbod );
+    glBindBuffer(GL_ARRAY_BUFFER, lightVbod);
     // send the data to the GPU
-    glBufferData( GL_ARRAY_BUFFER, 3*sizeof(float), NULL, GL_DYNAMIC_DRAW );
+    glBufferData(GL_ARRAY_BUFFER, 3 * sizeof(float), NULL, GL_DYNAMIC_DRAW);
 
     // enable our position attribute
-    glEnableVertexAttribArray(grndShaderAttribLocs.position );
+    glEnableVertexAttribArray(grndShaderAttribLocs.position);
     // map the position attribute to data within our buffer
-    glVertexAttribPointer(grndShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void*) 0 );
+    glVertexAttribPointer(grndShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void *) 0);
     //------------  END  LIGHT VAO------------
 
     //------------ BEGIN GROUND VAO ------------
     // Draw Ground
-    glBindVertexArray( vaods[GROUND] );
+    glBindVertexArray(vaods[GROUND]);
 
     // generate our vertex buffer object descriptors for the GROUND
-    glGenBuffers( 2, vbods );
+    glGenBuffers(2, vbods);
     // bind the VBO for our Ground Array Buffer
-    glBindBuffer( GL_ARRAY_BUFFER, vbods[0] );
+    glBindBuffer(GL_ARRAY_BUFFER, vbods[0]);
     // send the data to the GPU
-    glBufferData( GL_ARRAY_BUFFER, sizeof(groundVertices), groundVertices, GL_STATIC_DRAW );
+    glBufferData(GL_ARRAY_BUFFER, sizeof(groundVertices), groundVertices, GL_STATIC_DRAW);
 
     // bind the VBO for our Ground Element Array Buffer
-    glBindBuffer( GL_ELEMENT_ARRAY_BUFFER, vbods[1] );
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbods[1]);
     // send the data to the GPU
-    glBufferData( GL_ELEMENT_ARRAY_BUFFER, sizeof(groundIndices), groundIndices, GL_STATIC_DRAW );
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(groundIndices), groundIndices, GL_STATIC_DRAW);
 
     // enable our position attribute
-    glEnableVertexAttribArray(grndShaderAttribLocs.position );
+    glEnableVertexAttribArray(grndShaderAttribLocs.position);
     // map the position attribute to data within our buffer
-    glVertexAttribPointer(grndShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*) 0 );
+    glVertexAttribPointer(grndShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void *) 0);
 
     // enable our normal attribute
-    glEnableVertexAttribArray(grndShaderAttribLocs.normal );
+    glEnableVertexAttribArray(grndShaderAttribLocs.normal);
     // map the normal attribute to data within our buffer
-    glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6, (void*)(3 * sizeof(float)) );
+    glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6,
+                          (void *) (3 * sizeof(float)));
     //------------  END  GROUND VAO------------
 }
 
 void setupFonts() {
-	FT_Library ft;
+    FT_Library ft;
 
-	if(FT_Init_FreeType(&ft)) {
-	  fprintf(stderr, "Could not init freetype library\n");
-	  exit(EXIT_FAILURE);
-	}
+    if (FT_Init_FreeType(&ft)) {
+        fprintf(stderr, "Could not init freetype library\n");
+        exit(EXIT_FAILURE);
+    }
 
-	if(FT_New_Face(ft, "fonts/DroidSansMono.ttf", 0, &face)) {
-	  fprintf(stderr, "Could not open font\n");
-	  exit(EXIT_FAILURE);
-	}
+    if (FT_New_Face(ft, "fonts/DroidSansMono.ttf", 0, &face)) {
+        fprintf(stderr, "Could not open font\n");
+        exit(EXIT_FAILURE);
+    }
 
-	FT_Set_Pixel_Sizes(face, 0, 20);
+    FT_Set_Pixel_Sizes(face, 0, 20);
 
-	FT_GlyphSlot g = face->glyph;
-	GLuint w = 0;
-	GLuint h = 0;
+    FT_GlyphSlot g = face->glyph;
+    GLuint w = 0;
+    GLuint h = 0;
 
-	for(int i = 32; i < 128; i++) {
-	  if(FT_Load_Char(face, i, FT_LOAD_RENDER)) {
-	    fprintf(stderr, "Loading character %c failed!\n", i);
-	    continue;
-	  }
+    for (int i = 32; i < 128; i++) {
+        if (FT_Load_Char(face, i, FT_LOAD_RENDER)) {
+            fprintf(stderr, "Loading character %c failed!\n", i);
+            continue;
+        }
 
-	  w += g->bitmap.width;
-	  h = (h > g->bitmap.rows ? h : g->bitmap.rows);
-	}
+        w += g->bitmap.width;
+        h = (h > g->bitmap.rows ? h : g->bitmap.rows);
+    }
 
-	/* you might as well save this value as it is needed later on */
-	atlas_width = w;
-	atlas_height = h;
+    /* you might as well save this value as it is needed later on */
+    atlas_width = w;
+    atlas_height = h;
 
-	glEnable( GL_TEXTURE_2D );
-	glActiveTexture(GL_TEXTURE0);
-	glGenTextures(1, &font_texture_handle);
-	glBindTexture(GL_TEXTURE_2D, font_texture_handle);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glEnable(GL_TEXTURE_2D);
+    glActiveTexture(GL_TEXTURE0);
+    glGenTextures(1, &font_texture_handle);
+    glBindTexture(GL_TEXTURE_2D, font_texture_handle);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, 0);
 
-	GLint x = 0;
+    GLint x = 0;
 
-	for(int i = 32; i < 128; i++) {
-	  if(FT_Load_Char(face, i, FT_LOAD_RENDER))
-	    continue;
+    for (int i = 32; i < 128; i++) {
+        if (FT_Load_Char(face, i, FT_LOAD_RENDER))
+            continue;
 
-	  font_characters[i].ax = g->advance.x >> 6;
-	  font_characters[i].ay = g->advance.y >> 6;
+        font_characters[i].ax = g->advance.x >> 6;
+        font_characters[i].ay = g->advance.y >> 6;
 
-	  font_characters[i].bw = g->bitmap.width;
-	  font_characters[i].bh = g->bitmap.rows;
+        font_characters[i].bw = g->bitmap.width;
+        font_characters[i].bh = g->bitmap.rows;
 
-	  font_characters[i].bl = g->bitmap_left;
-	  font_characters[i].bt = g->bitmap_top;
+        font_characters[i].bl = g->bitmap_left;
+        font_characters[i].bt = g->bitmap_top;
 
-	  font_characters[i].tx = (float)x / w;
+        font_characters[i].tx = (float) x / w;
 
-	  glTexSubImage2D(GL_TEXTURE_2D, 0, x, 0, g->bitmap.width, g->bitmap.rows, GL_RED, GL_UNSIGNED_BYTE, g->bitmap.buffer);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, x, 0, g->bitmap.width, g->bitmap.rows, GL_RED, GL_UNSIGNED_BYTE,
+                        g->bitmap.buffer);
 
-	  x += g->bitmap.width;
-	}
+        x += g->bitmap.width;
+    }
 
-	glGenVertexArrays(1, &text_vao_handle);
-	glBindVertexArray(text_vao_handle);
+    glGenVertexArrays(1, &text_vao_handle);
+    glBindVertexArray(text_vao_handle);
 
-	glGenBuffers(1, &text_vbo_handle);
-	glBindBuffer(GL_ARRAY_BUFFER, text_vbo_handle);
-	glEnableVertexAttribArray(textShaderAttribLocs.text_texCoord_location);
-	glVertexAttribPointer(textShaderAttribLocs.text_texCoord_location, 4, GL_FLOAT, GL_FALSE, 0, (void*)0);
+    glGenBuffers(1, &text_vbo_handle);
+    glBindBuffer(GL_ARRAY_BUFFER, text_vbo_handle);
+    glEnableVertexAttribArray(textShaderAttribLocs.text_texCoord_location);
+    glVertexAttribPointer(textShaderAttribLocs.text_texCoord_location, 4, GL_FLOAT, GL_FALSE, 0, (void *) 0);
 }
 
-void debugSpacialHash(){
-   glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
-   GLint bufMask = GL_MAP_READ_BIT;
-   HashType* hash = (HashType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType)*HASH_MAP_SIZE, bufMask );
-   int h = 0;
-   for( int i = 0; i < HASH_MAP_SIZE; i++ ) {
-       hashMap[i] = hash[i];
-       if(hashMap[i].headNodeIndex != 0xffffffff)
-           h++;
-   }
-   glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
-   printf("Hash Cells Used: %d\n", h);
+void debugSpacialHash() {
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
+    GLint bufMask = GL_MAP_READ_BIT;
+    HashType *hash = (HashType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType) * HASH_MAP_SIZE,
+                                                   bufMask);
+    int h = 0;
+    for (int i = 0; i < HASH_MAP_SIZE; i++) {
+        hashMap[i] = hash[i];
+        if (hashMap[i].headNodeIndex != 0xffffffff)
+            h++;
+    }
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    printf("Hash Cells Used: %d\n", h);
 
-   glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
-   NodeType* list = (NodeType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType)*MAX_PARTICLES, bufMask );
-   int l = 0;
-   for( int i = 0; i < MAX_PARTICLES; i++ ) {
-       linkedList[i] = list[i];
-       if(linkedList[i].particleIndex > MAX_PARTICLES){
-           l++;
-       }
-   }
-   glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
-   printf("Invalid Particle Indices: %d\n", l);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+    NodeType *list = (NodeType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType) * NUM_PARTICLES,
+                                                   bufMask);
+    int l = 0;
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        linkedList[i] = list[i];
+        if (linkedList[i].particleIndex > NUM_PARTICLES) {
+            l++;
+        }
+    }
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+    printf("Invalid Particle Indices: %d\n", l);
 
-   int ic = 0;
-   for(int i = 0; i < MAX_PARTICLES; i++){
-       // Follow linked list, make sure list ends
-       int count = 0;
-       uint j = 0;
-       NodeType n = linkedList[i];
-       while (j < MAX_PARTICLES && count < MAX_PARTICLES){
-           // Exit on null
-           if(n.nextNodeIndex == 0xffffffff){
-               break;
-           }else{
-               // Or go to next node
-               j = n.nextNodeIndex;
-               n = linkedList[n.nextNodeIndex];
-           }
-           count ++;
-       }
-       if(count >= MAX_PARTICLES){
-           ic++;
-       }
-   }
-   printf("Infinite Loops Found In Linked List: %d\n", ic);
+    int invalidCount = 0;
+    int maxNumNeighbors = 0;
+    int maxCount = 0;
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        // Follow linked list, make sure list ends
+        int count = 0;
+        uint j = 0;
+        NodeType n = linkedList[i];
+        while (j < NUM_PARTICLES && count < NUM_PARTICLES) {
+            // Exit on null
+            if (n.nextNodeIndex == 0xffffffff) {
+                break;
+            } else {
+                // Or go to next node
+                j = n.nextNodeIndex;
+                n = linkedList[n.nextNodeIndex];
+            }
+            count++;
+        }
+
+        if (count > MAX_NEIGHBORS) {
+            // Count how many particles have too many neighbors
+            invalidCount++;
+        } else if (count > maxNumNeighbors) {
+            // Find the maximum valid number of neighbors a particle has
+            maxNumNeighbors = count;
+            // Reset the number of particles with that many neighbors
+            maxCount = 1;
+        } else if (count == maxNumNeighbors) {
+            // Count how many particles have the maximum number of neighbors
+            maxCount ++;
+        }
+
+    }
+    printf("Infinite Loops Found In Linked List: %d\n", invalidCount);
+    printf("Max Number of Neighbors (One Hash Cell): %d\n", maxNumNeighbors);
+    printf("Max Number of Neighbors Count (One Hash Cell): %d\n", maxNumNeighbors);
 }
 
-void debugNeighborFind(){
+void debugNeighborFind() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
     GLint bufMask = GL_MAP_READ_BIT;
-    NeighborType* list = (NeighborType *) glMapBufferRange( GL_SHADER_STORAGE_BUFFER, 0, sizeof(NeighborType)*MAX_PARTICLES, bufMask );
+    auto *neighborData = (NeighborType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+                                                           sizeof(NeighborType) * NUM_PARTICLES, bufMask);
     int invalidCount = 0, maxCount = 0;
-    for( int i = 0; i < MAX_PARTICLES; i++ ) {
-        if(list[i].count > MAX_NEIGHBORS){
+    for (int i = 0; i < NUM_PARTICLES; i++) {
+        if (neighborData[i].count > MAX_NEIGHBORS) {
             invalidCount++;
-        }else if(list[i].count == MAX_NEIGHBORS){
+        } else if (neighborData[i].count == MAX_NEIGHBORS) {
             maxCount++;
         }
     }
-    glUnmapBuffer( GL_SHADER_STORAGE_BUFFER );
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
     printf("Invalid Neighbor Counts: %d\n", invalidCount);
     printf("Max Neighbor Counts: %d\n\n", maxCount);
+
+
 }
 
 //*************************************************************************************
@@ -915,91 +971,66 @@ void debugNeighborFind(){
 // Rendering
 
 void render_text(const char *text, FT_Face face, float x, float y, float sx, float sy) {
-	struct point {
-		GLfloat x;
-		GLfloat y;
-		GLfloat s;
-		GLfloat t;
-	} coords[6 * strlen(text)];
+    struct point {
+        GLfloat x;
+        GLfloat y;
+        GLfloat s;
+        GLfloat t;
+    } coords[6 * strlen(text)];
 
-	GLint n = 0;
+    GLint n = 0;
 
-	for(const char *p = text; *p; p++) {
-		int characterIndex = (int)*p;
+    for (const char *p = text; *p; p++) {
+        int characterIndex = (int) *p;
 
-		character_info character = font_characters[characterIndex];
+        character_info character = font_characters[characterIndex];
 
-		GLfloat x2 =  x + character.bl * sx;
-		GLfloat y2 = -y - character.bt * sy;
-		GLfloat w = character.bw * sx;
-		GLfloat h = character.bh * sy;
+        GLfloat x2 = x + character.bl * sx;
+        GLfloat y2 = -y - character.bt * sy;
+        GLfloat w = character.bw * sx;
+        GLfloat h = character.bh * sy;
 
-		/* Advance the cursor to the start of the next character */
-		x += character.ax * sx;
-		y += character.ay * sy;
+        /* Advance the cursor to the start of the next character */
+        x += character.ax * sx;
+        y += character.ay * sy;
 
-		/* Skip glyphs that have no pixels */
-		if(!w || !h)
-			continue;
+        /* Skip glyphs that have no pixels */
+        if (!w || !h)
+            continue;
 
-		coords[n++] = (point){x2,     -y2    , character.tx,                                0};
-		coords[n++] = (point){x2 + w, -y2    , character.tx + character.bw / atlas_width,   0};
-		coords[n++] = (point){x2,     -y2 - h, character.tx,                                character.bh / atlas_height}; //remember: each glyph occupies a different amount of vertical space
+        coords[n++] = (point) {x2, -y2, character.tx, 0};
+        coords[n++] = (point) {x2 + w, -y2, character.tx + character.bw / atlas_width, 0};
+        coords[n++] = (point) {x2, -y2 - h, character.tx, character.bh /
+                                                          atlas_height}; //remember: each glyph occupies a different amount of vertical space
 
-		coords[n++] = (point){x2 + w, -y2    , character.tx + character.bw / atlas_width,   0};
-		coords[n++] = (point){x2,     -y2 - h, character.tx,                                character.bh / atlas_height};
-		coords[n++] = (point){x2 + w, -y2 - h, character.tx + character.bw / atlas_width,   character.bh / atlas_height};
-	}
-	glBindVertexArray(text_vao_handle);
-	glBindBuffer(GL_ARRAY_BUFFER, text_vbo_handle);
-	glBufferData(GL_ARRAY_BUFFER, sizeof( coords ), coords, GL_DYNAMIC_DRAW);
-	glDrawArrays(GL_TRIANGLES, 0, n);
+        coords[n++] = (point) {x2 + w, -y2, character.tx + character.bw / atlas_width, 0};
+        coords[n++] = (point) {x2, -y2 - h, character.tx, character.bh / atlas_height};
+        coords[n++] = (point) {x2 + w, -y2 - h, character.tx + character.bw / atlas_width, character.bh / atlas_height};
+    }
+    glBindVertexArray(text_vao_handle);
+    glBindBuffer(GL_ARRAY_BUFFER, text_vbo_handle);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(coords), coords, GL_DYNAMIC_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, n);
 }
 
 
-// handles drawing everything to our buffer
-void renderScene( GLFWwindow *window ) {
-	/***** TIME AND TIMESTAMP *****/
+void fluidUpdate() {
+    /***** TIME AND TIMESTAMP *****/
     double time = glfwGetTime();
-    double dt = time - lastTime;
+    float dt = time - lastTime;
     lastTime = time;
 
-    /***** MATRICES *****/
-	// query our current window size, determine the aspect ratio, and set our viewport size
-	GLfloat ratio;
-	ratio = windowWidth / (GLfloat) windowHeight;
-	glViewport(0, 0, windowWidth, windowHeight);
-
-	// create our Model, View, Projection, viewport matrices
-	glm::mat4 mMtx, vMtx, pMtx, vpMtx;
-	mMtx = glm::mat4(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);
-
-	// compute our projection matrix
-	pMtx = glm::perspective( 45.0f, ratio, 0.1f, 1000.0f );
-	// compute our view matrix based on our current camera setup
-	vMtx = glm::lookAt( eyePoint,lookAtPoint, upVector );
-	// Computer viewport matrix
-    vpMtx = glm::mat4(glm::mat3(windowWidth/2, 0.0f, windowWidth/2.0f, 0.0f, windowHeight/2.0f, windowHeight/2.0f, 0,0,1));
-
-    // precompute the modelview matrix
-	glm::mat4 mvMtx = vMtx * mMtx;
-	// precompute the normal matrix
-    glm::mat4 nMtx = glm::transpose(glm::inverse(mvMtx));
+    if (dt > MIN_TIMESTEP) {
+        dt = MIN_TIMESTEP;
+    }
 
     // compute perspective and view for neighbor/ signed distance field rendering
-    glm::mat4 opMtx, ovMtx;
+    glm::mat4 opMtx, ovMtx, mMtx;
+    mMtx = glm::mat4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
     opMtx = glm::ortho(-1000.0, 1000.0, -1000.0, 1000.0, 0.01, 1000.0);
-    ovMtx = glm::lookAt(glm::vec3(0.0,500.0,0.1), glm::vec3(0.0,0.0,0.0), upVector);
+    ovMtx = glm::lookAt(glm::vec3(0.0, 500.0, 0.1), glm::vec3(0.0, 0.0, 0.0), upVector);
     // precompute this modelview matrix
     glm::mat4 omvMtx = ovMtx * mMtx;
-
-    // Matricies
-    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(vMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
-    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[4], sizeof(glm::mat4), &(vpMtx)[0][0]);
 
 
     /***** WATER PARTICLES *****/
@@ -1016,22 +1047,19 @@ void renderScene( GLFWwindow *window ) {
     // Clear buffer data
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.hashClear);
-    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(GLuint)*HASH_MAP_SIZE);
+    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(GLuint) * HASH_MAP_SIZE);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+    glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
+    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(NodeType) * NUM_PARTICLES);
     GLuint zero = 0;
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
     glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &zero);
 
-    // Ping Pong position data
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.position);
-    glBindBuffer(GL_COPY_READ_BUFFER, particleSSBOs.positionStar);
-    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(Float4)*MAX_PARTICLES);
-
     // Buffer uniform data
     glBindBuffer(GL_UNIFORM_BUFFER, fluidUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &time);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &dt);
 
     /// Compute Neighbors
-
     // Set ortho matricies
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(omvMtx)[0][0]);
@@ -1041,22 +1069,49 @@ void renderScene( GLFWwindow *window ) {
     // Hash
     fluidUpdateProgram->useProgram();
 
-    glBindVertexArray( vaods[PARTICLES] );
-    glEnable( GL_RASTERIZER_DISCARD ); // Disable rasterizing
-    glDrawArrays( GL_POINTS, 0, MAX_PARTICLES); // Draw the particles
+    glBindVertexArray(vaods[PARTICLES]);
+    glEnable(GL_RASTERIZER_DISCARD); // Disable rasterizing
+    glDrawArrays(GL_POINTS, 0, NUM_PARTICLES); // Draw the particles
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT); // Make sure all data was processes
-    glDisable( GL_RASTERIZER_DISCARD ); // Renable rasterization
+    glDisable(GL_RASTERIZER_DISCARD); // Renable rasterization
 
-    #if DEBUG
+#if DEBUG
     debugSpacialHash();
     debugNeighborFind();
-    #endif
+#endif
+}
 
-    /// Compute color based on neighbors
-    //neighborColorProgram->useProgram();
-    //glDispatchCompute(MAX_PARTICLES / WORK_GROUP_SIZE, 1, 1);
-    //glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+// handles drawing everything to our buffer
+void renderScene(GLFWwindow *window) {
+    // Update Fluid data
+    for (int i = 0; i < SUBSTEPS; i++) {
+        fluidUpdate();
+    }
 
+
+    /***** MATRICES *****/
+    // query our current window size, determine the aspect ratio, and set our viewport size
+    GLfloat ratio;
+    ratio = windowWidth / (GLfloat) windowHeight;
+    glViewport(0, 0, windowWidth, windowHeight);
+
+    // create our Model, View, Projection, viewport matrices
+    glm::mat4 mMtx, vMtx, pMtx, vpMtx;
+    mMtx = glm::mat4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+
+    // compute our projection matrix
+    pMtx = glm::perspective(45.0f, ratio, 0.1f, 1000.0f);
+    // compute our view matrix based on our current camera setup
+    vMtx = glm::lookAt(eyePoint, lookAtPoint, upVector);
+    // Computer viewport matrix
+    vpMtx = glm::mat4(
+            glm::mat3(windowWidth / 2, 0.0f, windowWidth / 2.0f, 0.0f, windowHeight / 2.0f, windowHeight / 2.0f, 0, 0,
+                      1));
+
+    // precompute the modelview matrix
+    glm::mat4 mvMtx = vMtx * mMtx;
+    // precompute the normal matrix
+    glm::mat4 nMtx = glm::transpose(glm::inverse(mvMtx));
 
     /// Draw particles
     // Matrices
@@ -1068,10 +1123,10 @@ void renderScene( GLFWwindow *window ) {
 
     glPointSize(2);
     particleProgram->useProgram();
-    glBindVertexArray( vaods[PARTICLES] );
-    glDrawArrays( GL_POINTS, 0, MAX_PARTICLES);
+    glBindVertexArray(vaods[PARTICLES]);
+    glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
 
-    /***** LIGHT/GROUND COMMON *****/
+    /***** GROUND *****/
     // Set shader
     phongProgram->useProgram();
     // set up the subroutines
@@ -1083,156 +1138,134 @@ void renderScene( GLFWwindow *window ) {
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
 
-    /***** LIGHT *****/
     // Material settings
     glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).diffuse);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).specular);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float), matReader.getSwatch(LIGHT_MATERIAL).shininess);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float)*4, matReader.getSwatch(LIGHT_MATERIAL).ambient);
-
-    /*
-    glm::vec3 cameraVec = glm::vec3(glm::normalize(-(mvMtx*glm::vec4(lightPos,1.0f))));
-    glm::mat4 lMtx = glm::translate(mMtx, -cameraVec);
-    glm::vec3 lightForLight = glm::vec3(lMtx*glm::vec4(lightPos,1.0f));
-    glBindBuffer(GL_UNIFORM_BUFFER, lightUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
-    // Buffer light position
-    glBindVertexArray(vaods[LIGHT]);
-    glBindBuffer(GL_ARRAY_BUFFER, lightVbod);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(float)*3, &(lightForLight)[0]);
-    // Set up light size
-    glPointSize(LIGHT_SIZE);
-    // Draw
-    glDrawArrays(GL_POINTS, 0,1);
-    */
-
-    /***** GROUND *****/
-    // Material settings
-    glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float)*4, matReader.getSwatch(FLOOR_MATERIAL).diffuse);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float)*4, matReader.getSwatch(FLOOR_MATERIAL).specular);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float), matReader.getSwatch(FLOOR_MATERIAL).shininess);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float)*4, matReader.getSwatch(FLOOR_MATERIAL).ambient);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4,
+                    matReader.getSwatch(FLOOR_MATERIAL).diffuse);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4,
+                    matReader.getSwatch(FLOOR_MATERIAL).specular);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float),
+                    matReader.getSwatch(FLOOR_MATERIAL).shininess);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float) * 4,
+                    matReader.getSwatch(FLOOR_MATERIAL).ambient);
     // Light stuff
     glBindBuffer(GL_UNIFORM_BUFFER, lightUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float)*3, &(lightPos)[0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float) * 3, &(lightPos)[0]);
 
     // bind our Ground VAO
-	glBindVertexArray( vaods[GROUND] );
-	// draw our ground!
-	glDrawElements( GL_TRIANGLES, sizeof(groundIndices)/sizeof(unsigned short), GL_UNSIGNED_SHORT, (void*)0 );
-
-	//---- PARTICLES -----
-
+    glBindVertexArray(vaods[GROUND]);
+    // draw our ground!
+    glDrawElements(GL_TRIANGLES, sizeof(groundIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
 }
 
 // program entry point
-int main( int argc, char *argv[] ) {
-	GLFWwindow *window = setupGLFW();	// setup GLFW and get our window
-	setupOpenGL();						// setup OpenGL & GLEW
-	setupShaders();						// load our shader programs, uniforms, and attribtues
-	setupPipelines();                   // build pipelines from the shader programs created in setupShaders()
+int main(int argc, char *argv[]) {
+    GLFWwindow *window = setupGLFW();    // setup GLFW and get our window
+    setupOpenGL();                        // setup OpenGL & GLEW
+    setupShaders();                        // load our shader programs, uniforms, and attribtues
+    setupPipelines();                   // build pipelines from the shader programs created in setupShaders()
     setupParticleData();
-	setupBuffers();						// load our models into GPU memory
-	setupFonts();						// load our fonts into memory
+    setupBuffers();                        // load our models into GPU memory
+    setupFonts();                        // load our fonts into memory
 
-	convertSphericalToCartesian();		// position our camera in a pretty place
+    convertSphericalToCartesian();        // position our camera in a pretty place
 
-	lastTime = glfwGetTime();
+    lastTime = glfwGetTime();
 
-	GLfloat ClockLastTime = glfwGetTime();
-	GLuint nbFrames = 0;
-	GLdouble fps = 0;
-	std::deque<GLdouble> fpsAvgs(9);
-	GLdouble fpsAvg = 0;
-	
-	// as long as our window is open
-	while( !glfwWindowShouldClose(window) ) {
-		// clear the prior contents of our buffer
-		glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-		
-		glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+    GLfloat ClockLastTime = glfwGetTime();
+    GLuint nbFrames = 0;
+    GLdouble fps = 0;
+    std::deque<GLdouble> fpsAvgs(9);
+    GLdouble fpsAvg = 0;
 
-		// render our scene
-		renderScene( window );
+    // as long as our window is open
+    while (!glfwWindowShouldClose(window)) {
+        char c;//std::cin>>c;
 
-		// Measure speed
-		GLdouble currentTime = glfwGetTime();
-		nbFrames++;
-		if ( currentTime - ClockLastTime >= 0.33f ){ // If last prinf() was more than 1 sec ago
-			// printf and reset timer
-			fps = GLdouble(nbFrames)/(currentTime - ClockLastTime);
-			nbFrames = 0;
+        // clear the prior contents of our buffer
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+
+        // render our scene
+        renderScene(window);
+
+        // Measure speed
+        GLdouble currentTime = glfwGetTime();
+        nbFrames++;
+        if (currentTime - ClockLastTime >= 0.33f) { // If last prinf() was more than 1 sec ago
+            // printf and reset timer
+            fps = GLdouble(nbFrames) / (currentTime - ClockLastTime);
+            nbFrames = 0;
             ClockLastTime = currentTime;
 
-			fpsAvgs.pop_front();
-			fpsAvgs.push_back( fps );
+            fpsAvgs.pop_front();
+            fpsAvgs.push_back(fps);
 
-			GLdouble totalFPS = 0;
-			for( GLuint i = 0; i < fpsAvgs.size(); i++ ) {
-				totalFPS += fpsAvgs.at(i);
-			}
-			fpsAvg = totalFPS / fpsAvgs.size();
-		}
+            GLdouble totalFPS = 0;
+            for (GLuint i = 0; i < fpsAvgs.size(); i++) {
+                totalFPS += fpsAvgs.at(i);
+            }
+            fpsAvg = totalFPS / fpsAvgs.size();
+        }
 
-		glBindVertexArray(text_vao_handle);
-		glBindTexture(GL_TEXTURE_2D, font_texture_handle);
+        glBindVertexArray(text_vao_handle);
+        glBindTexture(GL_TEXTURE_2D, font_texture_handle);
 
-		textShaderProgram->useProgram();
+        textShaderProgram->useProgram();
 
-		glm::mat4 mvp = glm::mat4(1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1);
+        glm::mat4 mvp = glm::mat4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 
-		glUniformMatrix4fv(textShaderUniformLocs.text_mvp_location, 1, GL_FALSE, &mvp[0][0]);
-		
-		GLfloat white[4] = {1, 1, 1, 1};
-		glUniform4fv(textShaderUniformLocs.text_color_location, 1, white);
+        glUniformMatrix4fv(textShaderUniformLocs.text_mvp_location, 1, GL_FALSE, &mvp[0][0]);
 
-		GLfloat sx = 2.0 / (GLfloat)windowWidth;
-		GLfloat sy = 2.0 / (GLfloat)windowHeight;
+        GLfloat white[4] = {1, 1, 1, 1};
+        glUniform4fv(textShaderUniformLocs.text_color_location, 1, white);
 
-		char fpsStr[80];
-		sprintf( fpsStr, "%.3f frames/sec (Avg: %.3f)", fps, fpsAvg);
-		render_text(fpsStr, face, -1 + 8 * sx,   1 - 30 * sy, sx, sy);
+        GLfloat sx = 2.0 / (GLfloat) windowWidth;
+        GLfloat sy = 2.0 / (GLfloat) windowHeight;
+
+        char fpsStr[80];
+        sprintf(fpsStr, "%.3f frames/sec (Avg: %.3f)", fps, fpsAvg);
+        render_text(fpsStr, face, -1 + 8 * sx, 1 - 30 * sy, sx, sy);
 
         char illuminationStr[100];
-        if(phongSubroutines.setting == phongSubroutines.phong) {
+        if (phongSubroutines.setting == phongSubroutines.phong) {
             sprintf(illuminationStr, "(1-2) Illumination: Phong");
-        }else{
+        } else {
             sprintf(illuminationStr, "(1-2) Illumination: Blinn-Phong");
         }
-        render_text(illuminationStr, face, -1 + 8 * sx,   1 - 50 * sy, sx, sy);
+        render_text(illuminationStr, face, -1 + 8 * sx, 1 - 50 * sy, sx, sy);
 
-		// swap the front and back buffers
-		glfwSwapBuffers(window);
-		// check for any events
-		glfwPollEvents();
-		
-		// the following code is a hack for OSX Mojave
-		// the window is initially black until it is moved
-		// so instead of having the user manually move the window,
-		// we'll automatically move it and then move it back
-		if( !mackHack ) {
-			GLint xpos, ypos;
-			glfwGetWindowPos(window, &xpos, &ypos);
-			glfwSetWindowPos(window, xpos+10, ypos+10);
-			glfwSetWindowPos(window, xpos, ypos);
-			mackHack = true;
-		}
+        // swap the front and back buffers
+        glfwSwapBuffers(window);
+        // check for any events
+        glfwPollEvents();
 
-	}
+        // the following code is a hack for OSX Mojave
+        // the window is initially black until it is moved
+        // so instead of having the user manually move the window,
+        // we'll automatically move it and then move it back
+        if (!mackHack) {
+            GLint xpos, ypos;
+            glfwGetWindowPos(window, &xpos, &ypos);
+            glfwSetWindowPos(window, xpos + 10, ypos + 10);
+            glfwSetWindowPos(window, xpos, ypos);
+            mackHack = true;
+        }
 
-	// destroy our window
-	glfwDestroyWindow(window);
-	// end GLFW
-	glfwTerminate();
+    }
 
-	// delete our shader programs
-	delete phongProgram;
-	delete textShaderProgram;
-	delete fluidUpdateProgram;
+    // destroy our window
+    glfwDestroyWindow(window);
+    // end GLFW
+    glfwTerminate();
+
+    // delete our shader programs
+    delete phongProgram;
+    delete textShaderProgram;
+    delete fluidUpdateProgram;
     delete particleProgram;
 
-	// SUCCESS!!
-	return EXIT_SUCCESS;
+    // SUCCESS!!
+    return EXIT_SUCCESS;
 }
