@@ -37,7 +37,7 @@
 #include "include/MaterialReader.h"
 #include "include/ShaderProgram4.hpp"
 
-#define DEBUG 0
+#define DEBUG 1
 
 //*************************************************************************************
 
@@ -50,10 +50,10 @@ struct Vertex {
 
 // specify our Ground Vertex Information
 const Vertex groundVertices[] = {
-        {-15.0f, -5.0f, -15.0f, 0.0f, 1.0f, 0.0f}, // 0 - BL
-        {15.0f,  -5.0f, -15.0f, 0.0f, 1.0f, 0.0f}, // 1 - BR
-        {15.0f,  -5.0f, 15.0f,  0.0f, 1.0f, 0.0f}, // 2 - TR
-        {-15.0f, -5.0f, 15.0f,  0.0f, 1.0f, 0.0f}  // 3 - TL
+        {-30.0f, -5.0f, -30.0f, 0.0f, 1.0f, 0.0f}, // 0 - BL
+        {30.0f,  -5.0f, -30.0f, 0.0f, 1.0f, 0.0f}, // 1 - BR
+        {30.0f,  -5.0f, 30.0f,  0.0f, 1.0f, 0.0f}, // 2 - TR
+        {-30.0f, -5.0f, 30.0f,  0.0f, 1.0f, 0.0f}  // 3 - TL
 };
 // specify our Ground Index Ordering
 const GLushort groundIndices[] = {
@@ -81,20 +81,39 @@ struct character_info {
 /// CONFIGURATIONS ///
 // Fluid Dynamics
 const int WORK_GROUP_SIZE = 1536;
-const uint NUM_PARTICLES = WORK_GROUP_SIZE * 1; // S
-const uint HASH_MAP_SIZE = 2*NUM_PARTICLES;
+const uint NUM_PARTICLES = WORK_GROUP_SIZE * 10; // S
+const uint HASH_MAP_SIZE = NUM_PARTICLES;
 const uint MAX_NEIGHBORS = 500;
 
 // Source: http://graphics.stanford.edu/courses/cs348c/PA1_PBF2016/index.html
 const uint SUBSTEPS = 2;
-const uint SOLVER_ITERS = 2;
-const float REST_DENSITY = 6378.0;
-const float SUPPORT_RADIUS = 0.1;
-const float EPSILON = 600.0;
-const float MIN_TIMESTEP = 0.0083;
+const uint SOLVER_ITERS = 4;
+const float REST_DENSITY = 600.0;
+const float SUPPORT_RADIUS = 0.5;
+const float EPSILON = 6000.0;
+const float MAX_DELTA_T = 0.0083;
 const float COLLISION_EPSILON = 0.0001;
-const float KPOLY = (315.0 / (64.0 * M_PI * pow(SUPPORT_RADIUS, 9)));
-const float KSPIKY = 45.0 / (M_PI * pow(SUPPORT_RADIUS, 6));
+const float KPOLY = (315.0f / (64.0f * M_PI * pow(SUPPORT_RADIUS, 9)));
+const float KSPIKY = -45.0f / (M_PI * pow(SUPPORT_RADIUS, 6));
+const float SCORR = 0.01;
+const float PRESSURE_RADIUS = 0.1 * SUPPORT_RADIUS;
+const float DCORR = KPOLY * pow(pow(SUPPORT_RADIUS, 2) - pow(PRESSURE_RADIUS, 2), 3);
+const int PCORR = 4;
+const float KXSPH = 0.003;
+const float VORT_EPSILON = 0.0013;
+
+
+float restDensity = REST_DENSITY;
+float epsilon = EPSILON;
+float supportRad = SUPPORT_RADIUS;
+float kPoly = KPOLY;
+float kSpiky = kSpiky;
+float pressureRad = PRESSURE_RADIUS;
+float dCorr = DCORR;
+float vEps = VORT_EPSILON;
+float sCorr = SCORR;
+float kXsph = KXSPH;
+float simTime = 0.0;
 
 // Materials
 MaterialSettings matReader;
@@ -120,7 +139,7 @@ glm::vec3 upVector(0.0f, 1.0f, 0.0f);
 glm::vec3 lightPos = glm::vec3(6, 10, 1);
 
 // Simulation timing
-double lastTime;
+double lastTime = 0.0;
 
 /// SHADER PROGRAMS ///
 
@@ -265,6 +284,7 @@ GLboolean mackHack = false;
 /// CONTROLS ///
 bool keys[348];
 
+
 //*************************************************************************************
 
 // Helper Funcs
@@ -302,8 +322,14 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
                 // Use blinn-phong illumination
                 phongSubroutines.setting = phongSubroutines.blinnPhong;
                 break;
+            default:
+                keys[key] = true;
+                break;
         }
+    } else if (action == GLFW_RELEASE) {
+        keys[key] = false;
     }
+
 }
 
 // handle mouse clicks
@@ -467,7 +493,7 @@ void setupPipelines() {
 
 void setupParticleData() {
     // randomly initialize particle data
-    for(GLuint i = 0; i < NUM_PARTICLES; i++){
+    for (GLuint i = 0; i < NUM_PARTICLES; i++) {
         particleData.position[i].x = ((rand() % 1000) / 100.0) - 5;
         particleData.position[i].y = ((rand() % 1000) / 100.0) - 5;
         particleData.position[i].z = ((rand() % 1000) / 100.0) - 5;
@@ -526,7 +552,9 @@ void setupBuffers() {
     const GLchar *fluidNames[] = {"FluidDynamics.maxParticles", "FluidDynamics.mapSize", "FluidDynamics.supportRadius",
                                   "FluidDynamics.dt", "FluidDynamics.maxNeighbors", "FluidDynamics.solverIters",
                                   "FluidDynamics.restDensity", "FluidDynamics.epsilon",
-                                  "FluidDynamics.collisionEpsilon", "FluidDynamics.kpoly", "FluidDynamics.kspiky"};
+                                  "FluidDynamics.collisionEpsilon", "FluidDynamics.kpoly", "FluidDynamics.kspiky",
+                                  "FluidDynamics.scorr", "FluidDynamics.dcorr", "FluidDynamics.pcorr",
+                                  "FluidDynamics.kxsph", "FluidDynamics.vortEpsilon", "FluidDynamics.time"};
 
     // get block offsets
     matriciesUniformBuffer.offsets = phongProgram->getUniformBlockOffsets("Matricies", matrixNames);
@@ -586,15 +614,21 @@ void setupBuffers() {
     glBindBufferBase(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockBinding, fluidUniformBuffer.handle);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[0], sizeof(GLuint), &NUM_PARTICLES);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[1], sizeof(GLuint), &HASH_MAP_SIZE);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLfloat), &SUPPORT_RADIUS);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &MIN_TIMESTEP);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLfloat), &supportRad);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[3], sizeof(GLfloat), &MAX_DELTA_T);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[4], sizeof(GLuint), &MAX_NEIGHBORS);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[5], sizeof(GLuint), &SOLVER_ITERS);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[6], sizeof(GLfloat), &REST_DENSITY);
-    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[7], sizeof(GLfloat), &EPSILON);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[6], sizeof(GLfloat), &restDensity);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[7], sizeof(GLfloat), &epsilon);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[8], sizeof(GLfloat), &COLLISION_EPSILON);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[9], sizeof(GLfloat), &KPOLY);
     glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[10], sizeof(GLfloat), &KSPIKY);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[11], sizeof(GLfloat), &SCORR);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[12], sizeof(GLfloat), &DCORR);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[13], sizeof(GLint), &PCORR);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[14], sizeof(GLfloat), &KXSPH);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[15], sizeof(GLfloat), &VORT_EPSILON);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[16], sizeof(GLfloat), &simTime);
     glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(),
                           fluidUpdateProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
 
@@ -685,7 +719,7 @@ void setupBuffers() {
     glGenBuffers(1, &neighborSSBOs.hashMap);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.hashMap, neighborSSBOs.hashMap);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(HashType) * HASH_MAP_SIZE, NULL, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(HashType) * HASH_MAP_SIZE, NULL, GL_DYNAMIC_DRAW);
 
     /// HashClear SSBO
     // generate, bind, and buffer data
@@ -698,7 +732,7 @@ void setupBuffers() {
     glGenBuffers(1, &neighborSSBOs.linkedList);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.linkedList, neighborSSBOs.linkedList);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NodeType) * NUM_PARTICLES, listClear, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NodeType) * NUM_PARTICLES, listClear, GL_DYNAMIC_DRAW);
 
     /// ListClear SSBO
     // generate, bind, and buffer data
@@ -711,14 +745,14 @@ void setupBuffers() {
     glGenBuffers(1, &neighborSSBOs.neighborData);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.neighbors, neighborSSBOs.neighborData);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NeighborType) * NUM_PARTICLES, neighborData, GL_DYNAMIC_COPY);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NeighborType) * NUM_PARTICLES, neighborData, GL_DYNAMIC_DRAW);
 
     /// Atomic SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.counter);
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
     glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, fluidSSBOLocs.counter, neighborSSBOs.counter);
-    glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_STREAM_COPY);
+    glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
 
 
     //------------ END SSBOs --------
@@ -885,16 +919,20 @@ void debugSpacialHash() {
     GLint bufMask = GL_MAP_READ_BIT;
     HashType *hash = (HashType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType) * HASH_MAP_SIZE,
                                                    bufMask);
+    /*
     int h = 0;
     for (int i = 0; i < HASH_MAP_SIZE; i++) {
         hashMap[i] = hash[i];
         if (hashMap[i].headNodeIndex != 0xffffffff)
             h++;
     }
+    */
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-    printf("Hash Cells Used: %d\n", h);
+    //printf("Hash Cells Used: %d\n", h);
+
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
+    /*
     NodeType *list = (NodeType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType) * NUM_PARTICLES,
                                                    bufMask);
     int l = 0;
@@ -908,7 +946,7 @@ void debugSpacialHash() {
     printf("Invalid Particle Indices: %d\n", l);
 
     int invalidCount = 0;
-    int maxNumNeighbors = 0;
+    int maxNumHashCell = 0;
     int maxCount = 0;
     for (int i = 0; i < NUM_PARTICLES; i++) {
         // Follow linked list, make sure list ends
@@ -927,43 +965,47 @@ void debugSpacialHash() {
             count++;
         }
 
-        if (count > MAX_NEIGHBORS) {
+        if (count > NUM_PARTICLES) {
             // Count how many particles have too many neighbors
             invalidCount++;
-        } else if (count > maxNumNeighbors) {
+        } else if (count > maxNumHashCell) {
             // Find the maximum valid number of neighbors a particle has
-            maxNumNeighbors = count;
+            maxNumHashCell = count;
             // Reset the number of particles with that many neighbors
             maxCount = 1;
-        } else if (count == maxNumNeighbors) {
+        } else if (count == maxNumHashCell) {
             // Count how many particles have the maximum number of neighbors
-            maxCount ++;
+            maxCount++;
         }
 
     }
     printf("Infinite Loops Found In Linked List: %d\n", invalidCount);
-    printf("Max Number of Neighbors (One Hash Cell): %d\n", maxNumNeighbors);
-    printf("Max Number of Neighbors Count (One Hash Cell): %d\n", maxNumNeighbors);
+    printf("Max Number in Hash Cell (One Hash Cell): %d\n", maxNumHashCell);
+    printf("Max Number in Hash Cell Count (One Hash Cell): %d\n", maxCount);
+    */
 }
 
 void debugNeighborFind() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
     GLint bufMask = GL_MAP_READ_BIT;
-    auto *neighborData = (NeighborType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
+    auto *neighborList = (NeighborType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
                                                            sizeof(NeighborType) * NUM_PARTICLES, bufMask);
     int invalidCount = 0, maxCount = 0;
+    int maxNeighbors = 0;
     for (int i = 0; i < NUM_PARTICLES; i++) {
-        if (neighborData[i].count > MAX_NEIGHBORS) {
+        if (neighborList[i].count > MAX_NEIGHBORS) {
             invalidCount++;
-        } else if (neighborData[i].count == MAX_NEIGHBORS) {
+        } else if (neighborList[i].count == MAX_NEIGHBORS) {
             maxCount++;
+        }
+        if (neighborList[i].count > maxNeighbors) {
+            maxNeighbors = neighborList[i].count;
         }
     }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
     printf("Invalid Neighbor Counts: %d\n", invalidCount);
-    printf("Max Neighbor Counts: %d\n\n", maxCount);
-
-
+    printf("Actual Max Neighbor Counts: %d\n", maxCount);
+    printf("Max Number of Neighbors: %d\n\n", maxNeighbors);
 }
 
 //*************************************************************************************
@@ -1020,8 +1062,9 @@ void fluidUpdate() {
     float dt = time - lastTime;
     lastTime = time;
 
-    if (dt > MIN_TIMESTEP) {
-        dt = MIN_TIMESTEP;
+    if (dt > MAX_DELTA_T) {
+        dt = MAX_DELTA_T;
+        simTime += dt;
     }
 
     // compute perspective and view for neighbor/ signed distance field rendering
@@ -1048,9 +1091,7 @@ void fluidUpdate() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
     glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.hashClear);
     glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(GLuint) * HASH_MAP_SIZE);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
-    glBindBuffer(GL_COPY_READ_BUFFER, neighborSSBOs.listClear);
-    glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(NodeType) * NUM_PARTICLES);
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
     GLuint zero = 0;
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
     glBufferSubData(GL_ATOMIC_COUNTER_BUFFER, 0, sizeof(GLuint), &zero);
@@ -1071,14 +1112,18 @@ void fluidUpdate() {
 
     glBindVertexArray(vaods[PARTICLES]);
     glEnable(GL_RASTERIZER_DISCARD); // Disable rasterizing
-    glDrawArrays(GL_POINTS, 0, NUM_PARTICLES); // Draw the particles
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT); // Make sure all data was processes
+    glDrawArrays(GL_POINTS, 0, NUM_PARTICLES); // Draw the particles#
+    glMemoryBarrier(GL_ALL_BARRIER_BITS); // Make sure all data was processes
     glDisable(GL_RASTERIZER_DISCARD); // Renable rasterization
 
 #if DEBUG
     debugSpacialHash();
-    debugNeighborFind();
+    //debugNeighborFind();
 #endif
+
+    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.position);
+    //glBindBuffer(GL_COPY_READ_BUFFER, particleSSBOs.positionStar);
+    //glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(Float4)*NUM_PARTICLES);
 }
 
 // handles drawing everything to our buffer
@@ -1158,6 +1203,95 @@ void renderScene(GLFWwindow *window) {
     glDrawElements(GL_TRIANGLES, sizeof(groundIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
 }
 
+static void updateParams() {
+    static double time_last = 0;
+    double dt = glfwGetTime() - time_last;
+
+    // Update time
+    glBindBufferBase(GL_UNIFORM_BUFFER, fluidUniformBuffer.blockBinding, fluidUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[16], sizeof(GLfloat), &simTime);
+
+    if (keys[GLFW_KEY_R]) {
+        // increase rest density
+        restDensity += ceil(100 * dt);
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[6], sizeof(GLfloat), &restDensity);
+    }
+    if (keys[GLFW_KEY_E]) {
+        // decrease rest density
+        if (restDensity > ceil(100 * dt)) {
+            restDensity -= ceil(100 * dt);
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[6], sizeof(GLfloat), &restDensity);
+        }
+    }
+    if (keys[GLFW_KEY_F]) {
+        epsilon += ceil(100 * dt);
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[7], sizeof(GLfloat), &epsilon);
+    }
+    if (keys[GLFW_KEY_D]) {
+        if (epsilon > ceil(100 * dt)) {
+            epsilon -= ceil(100 * dt);
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[7], sizeof(GLfloat), &epsilon);
+        }
+    }
+    if (keys[GLFW_KEY_Y]) {
+        supportRad += dt / 100.0;
+        kPoly = (315.0f / (64.0f * M_PI * pow(supportRad, 9)));
+        kSpiky = -45.0f / (M_PI * pow(supportRad, 6));
+        pressureRad = 0.1 * supportRad;
+        dCorr = kPoly * pow(pow(supportRad, 2) - pow(pressureRad, 2), 3);
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLfloat), &supportRad);
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[9], sizeof(GLfloat), &kPoly);
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[10], sizeof(GLfloat), &kSpiky);
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[12], sizeof(GLfloat), &dCorr);
+    }
+    if (keys[GLFW_KEY_T]) {
+        if (supportRad > dt / 100.0) {
+            supportRad -= dt / 100.0;
+            kPoly = (315.0f / (64.0f * M_PI * pow(supportRad, 9)));
+            kSpiky = -45.0f / (M_PI * pow(supportRad, 6));
+            pressureRad = 0.1 * supportRad;
+            dCorr = kPoly * pow(pow(supportRad, 2) - pow(pressureRad, 2), 3);
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[2], sizeof(GLfloat), &supportRad);
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[9], sizeof(GLfloat), &kPoly);
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[10], sizeof(GLfloat), &kSpiky);
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[12], sizeof(GLfloat), &dCorr);
+        }
+    }
+    if (keys[GLFW_KEY_V]) {
+        vEps += dt / 100.0;
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[15], sizeof(GLfloat), &vEps);
+    }
+    if (keys[GLFW_KEY_C]) {
+        if (vEps > dt / 100.0) {
+            vEps -= dt / 100.0;
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[15], sizeof(GLfloat), &vEps);
+        }
+    }
+    if (keys[GLFW_KEY_8]) {
+        sCorr += dt / 100.0;
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[11], sizeof(GLfloat), &sCorr);
+    }
+    if (keys[GLFW_KEY_7]) {
+        if (sCorr > dt / 100.0) {
+            sCorr -= dt / 100.0;
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[11], sizeof(GLfloat), &sCorr);
+        }
+    }
+    if (keys[GLFW_KEY_5]) {
+        kXsph += dt / 100.0;
+        glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[14], sizeof(GLfloat), &kXsph);
+    }
+    if (keys[GLFW_KEY_4]) {
+        if (kXsph > dt / 100.0) {
+            kXsph -= dt / 100.0;
+            glBufferSubData(GL_UNIFORM_BUFFER, fluidUniformBuffer.offsets[14], sizeof(GLfloat), &kXsph);
+        }
+    }
+
+
+    time_last = glfwGetTime();
+}
+
 // program entry point
 int main(int argc, char *argv[]) {
     GLFWwindow *window = setupGLFW();    // setup GLFW and get our window
@@ -1180,7 +1314,7 @@ int main(int argc, char *argv[]) {
 
     // as long as our window is open
     while (!glfwWindowShouldClose(window)) {
-        char c;//std::cin>>c;
+
 
         // clear the prior contents of our buffer
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1189,6 +1323,8 @@ int main(int argc, char *argv[]) {
 
         // render our scene
         renderScene(window);
+
+        updateParams();
 
         // Measure speed
         GLdouble currentTime = glfwGetTime();
@@ -1235,6 +1371,34 @@ int main(int argc, char *argv[]) {
             sprintf(illuminationStr, "(1-2) Illumination: Blinn-Phong");
         }
         render_text(illuminationStr, face, -1 + 8 * sx, 1 - 50 * sy, sx, sy);
+
+
+        char restStr[100];
+        int den = restDensity;
+        sprintf(restStr, "(-e/r+) Rest Density: %d", den);
+        render_text(restStr, face, -1 + 8 * sx, 1 - 70 * sy, sx, sy);
+
+        char epsStr[100];
+        int eps = epsilon;
+        sprintf(epsStr, "(-d/f+) Epsilon: %d", eps);
+        render_text(epsStr, face, -1 + 8 * sx, 1 - 90 * sy, sx, sy);
+
+        char supportStr[100];
+        sprintf(supportStr, "(-t/y+) Support Radius: %f", supportRad);
+        render_text(supportStr, face, -1 + 8 * sx, 1 - 110 * sy, sx, sy);
+
+        char vEpsStr[100];
+        sprintf(vEpsStr, "(-c/v+) Vort Epsilon: %f", vEps);
+        render_text(vEpsStr, face, -1 + 8 * sx, 1 - 130 * sy, sx, sy);
+
+        char scoorStr[100];
+        sprintf(scoorStr, "(-7/8+) Tensile Instability: %f", sCorr);
+        render_text(scoorStr, face, -1 + 8 * sx, 1 - 150 * sy, sx, sy);
+
+        char xsphStr[100];
+        sprintf(xsphStr, "(-4/5+) XSPH: %f", kXsph);
+        render_text(xsphStr, face, -1 + 8 * sx, 1 - 170 * sy, sx, sy);
+
 
         // swap the front and back buffers
         glfwSwapBuffers(window);

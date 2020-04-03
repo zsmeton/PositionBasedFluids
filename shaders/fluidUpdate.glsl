@@ -32,6 +32,12 @@ layout(shared, binding = 4) uniform FluidDynamics {
     float collisionEpsilon;
     float kpoly;
     float kspiky;
+    float scorr;
+    float dcorr;
+    int pcorr;
+    float kxsph;
+    float vortEpsilon;
+    float time;
 } fluid;
 
 // ***** VERTEX SHADER STRUCTS *****
@@ -207,11 +213,11 @@ float squareMagnitude(vec3 vec){
 // SOURCE: Mathias Muller et al (2003)
 float WPoly(vec3 dist){
     float rLen = length(dist);
-    if (rLen > fluid.supportRadius || rLen <= 0.0001) {
+    if (rLen > fluid.supportRadius || rLen <= 0.0000001) {
         return 0;
     }
 
-    float h2minusr2 = fluid.supportRadius * fluid.supportRadius - squareMagnitude(dist);
+    float h2minusr2 = fluid.supportRadius * fluid.supportRadius - rLen * rLen;
     return fluid.kpoly * h2minusr2 * h2minusr2 * h2minusr2;
 }
 
@@ -220,13 +226,12 @@ float WPoly(vec3 dist){
 vec3 gradWSpiky(vec3 dist){
     float rLen = length(dist);
 
-    if(rLen > fluid.supportRadius || rLen <= 0.0001){
+    if (rLen > fluid.supportRadius || rLen <= 0.0000001){
         return vec3(0.0);
     }
 
-    float scaling = (fluid.kspiky / rLen);
     float hminusr = fluid.supportRadius - rLen;
-    return -dist * scaling * (hminusr * hminusr);
+    return fluid.kspiky * (hminusr * hminusr) * normalize(dist);
 }
 
 // Standard SPH Density Estimator
@@ -278,18 +283,80 @@ float lambda(){
     return -densityConstraint/(sumGrad + fluid.epsilon);
 }
 
+float sCorr(vec3 pi, vec3 pj){
+    return -fluid.scorr * pow(WPoly(pi-pj)/fluid.dcorr, fluid.pcorr);
+}
+
 vec3 deltaP(){
     vec3 pos = vec3(newPositions[vIndex]);
     float lambdaI = lambdas[vIndex];
     vec3 deltaPos = vec3(0.0);
 
     NeighborType neighborData = neighbors[vIndex];
-    for(uint i = 0; i < neighborData.count; i++){
+    for (uint i = 0; i < neighborData.count; i++){
         uint j = neighborData.neighboring[i];
-        deltaPos += (lambdaI + lambdas[j]) * gradWSpiky(pos - vec3(newPositions[j]));
+        vec3 posj = vec3(newPositions[j]);
+        float s = sCorr(pos, posj);
+        deltaPos += (lambdaI + lambdas[j] + s) * gradWSpiky(pos - posj);
     }
 
     return deltaPos / fluid.restDensity;
+}
+
+vec3 vorticityLocation(float magnitude){
+    vec3 pos = vec3(newPositions[vIndex]);
+    vec3 vel = vec3(velocities[vIndex]);
+    vec3 location = vec3(0.0);
+    NeighborType neighborData = neighbors[vIndex];
+
+
+    for (uint i = 0; i < neighborData.count; i++){
+        location += gradWSpiky(pos-vec3(newPositions[neighborData.neighboring[i]])) * magnitude;
+    }
+
+    return location;
+}
+
+// Calculates the vorticity at particle location
+vec3 vorticity(){
+    vec3 pos = vec3(newPositions[vIndex]);
+    vec3 vel = vec3(velocities[vIndex]);
+    vec3 vort = vec3(0.0);
+    NeighborType neighborData = neighbors[vIndex];
+
+    for (uint i = 0; i < neighborData.count; i++){
+        vort += cross((vec3(velocities[neighborData.neighboring[i]]) - vel), gradWSpiky(pos-vec3(newPositions[neighborData.neighboring[i]])));
+    }
+
+    return vort;
+}
+
+vec3 vorticityConfinement(){
+    vec3 vort = vorticity();
+    if (length(vort) <= 0.00001){
+        return vec3(0.0);
+    }
+
+    vec3 loc = vorticityLocation(length(vort));
+    if (length(loc) <= 0.00001){
+        return vec3(0.0);
+    }
+    loc = normalize(loc);
+
+    return fluid.vortEpsilon * cross(loc, vort);
+}
+
+vec3 xsph(){
+    vec3 pos = vec3(newPositions[vIndex]);
+    vec3 vel = vec3(velocities[vIndex]);
+    vec3 velNeighbor = vec3(0.0);
+    NeighborType neighborData = neighbors[vIndex];
+
+    for (uint i = 0; i < neighborData.count; i++){
+        velNeighbor += (vec3(velocities[neighborData.neighboring[i]]) - vel) * WPoly(pos-vec3(newPositions[neighborData.neighboring[i]]));
+    }
+
+    return vel + fluid.kxsph * velNeighbor;
 }
 
 vec3 confineToBox(vec3 pos, vec3 deltaPos){
@@ -298,29 +365,24 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
     colors[vIndex].r = 0.0;
 
     // Check floor
-    if(newPos.y < -5.0){
+    if (newPos.y < -5.0){
         deltaPos.y = -5.0 - newPos.y + fluid.collisionEpsilon;
-        colors[vIndex].r = 1.0;
-    } else if(newPos.y > 20.0){
+    } else if (newPos.y > 20.0){
         deltaPos.y = 20.0 - newPos.y - fluid.collisionEpsilon;
-        colors[vIndex].r = 1.0;
     }
     // Check left wall
-    if(newPos.x < -10.0){
-        deltaPos.x = -10.0 - newPos.x + fluid.collisionEpsilon;
-        colors[vIndex].r = 1.0;
-    }else if(newPos.x > 10.0){
+    if (newPos.x < -5.0){
+        deltaPos.x = -5.0 - newPos.x + fluid.collisionEpsilon;
+    } else if (newPos.x > 5.0){
         // Check right wall
-        deltaPos.x = 10.0 - newPos.x - fluid.collisionEpsilon;
-        colors[vIndex].r = 1.0;
+        deltaPos.x = 5.0 - newPos.x - fluid.collisionEpsilon;
     }
     // Check front wall
-    if(newPos.z < -5.0){
-        deltaPos.z = -5.0 - newPos.z + fluid.collisionEpsilon;
-        colors[vIndex].r = 1.0;
-    }else if(newPos.z > 5.0){
+    float wallZ = -5.0 + sin(10.0*fluid.time);
+    if (newPos.z < wallZ){
+        deltaPos.z = wallZ - newPos.z + fluid.collisionEpsilon;
+    } else if (newPos.z > 5.0){
         deltaPos.z = 5.0 - newPos.z - fluid.collisionEpsilon;
-        colors[vIndex].r = 1.0;
     }
 
     return deltaPos;
@@ -329,24 +391,24 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
 void main() {
     // Apply Forces, Predict Positions
     vec3 updatedVelocity = vec3(vVel) + fluid.dt *  vec3(0.0, -9.8, 0.0);
-    vec3 _pos = vec3(vPos) + fluid.dt * updatedVelocity ; // Set additional variable for memory access optimization
+    vec3 _pos = vec3(vPos) + fluid.dt * updatedVelocity;// Set additional variable for memory access optimization
+    _pos += confineToBox(_pos, vec3(0.0));
     newPositions[vIndex].xyz = _pos;
 
     // Spacial Hash
-        // Calculate hash
-        int hashIdx = spacialHash(_pos.x, _pos.y, _pos.z);
-        // Get the index of the next empty slot in the buffer
-        uint nodeIdx = atomicCounterIncrement(nextNodeCounter);
+    // Calculate hash
+    int hashIdx = spacialHash(_pos.x, _pos.y, _pos.z);
+    // Get the index of the next empty slot in the buffer
+    uint nodeIdx = atomicCounterIncrement(nextNodeCounter);
 
-        // is there space left in the buffer
-        if(nodeIdx < fluid.maxParticles) {
-            // Update the head pointer in the hash map
+    // is there space left in the buffer
+    if (nodeIdx < fluid.maxParticles) {
+        // Update the head pointer in the hash map
             uint previousHeadIdx = atomicExchange(hashMap[hashIdx].headNodeIndex, nodeIdx);
 
             // Set linked list data appropriately
             nodes[nodeIdx].nextNodeIndex = previousHeadIdx;
             nodes[nodeIdx].particleIndex = vIndex;
-
         }else{
             // HERE LIES DRAGONS, VERY FIERCE ONES
             // THIS SHOULD NEVER HAPPEN AND IF IT DOES THINGS WILL BREAK, LOTS OF THINGS!!!!!!
@@ -365,21 +427,31 @@ void main() {
         // Update Position
             // Calculate Delta P
             vec3 iterDeltaP = deltaP();
-            colors[vIndex].rgb = iterDeltaP;
 
-            // Collision detection and response
-            iterDeltaP = confineToBox(newPositions[vIndex].xyz, iterDeltaP);
+        // Collision detection and response
+        iterDeltaP = confineToBox(newPositions[vIndex].xyz, iterDeltaP);
         memoryBarrier();
-            // Actually update position
-            newPositions[vIndex].xyz = vec3(newPositions[vIndex]) + iterDeltaP;
+
+        // Actually update position
+        newPositions[vIndex].xyz = vec3(newPositions[vIndex]) + iterDeltaP;
         memoryBarrier();
     }
 
     // Update Velocity
     vec3 vel = (newPositions[vIndex].xyz - vec3(vPos))/fluid.dt;
     velocities[vIndex].xyz = vel;
-    colors[vIndex].rgb = vel;
+    memoryBarrier();
+
     // Apply Vorticity Confinement and XSPH Viscosity
-    // Update Position
+    velocities[vIndex].xyz += vorticityConfinement();
+    memoryBarrier();
+    vec3 newVel = xsph();
+    memoryBarrier();
+
+    // Update Position and Velocity
+    velocities[vIndex].xyz = newVel;
     positions[vIndex].xyz = newPositions[vIndex].xyz;
+
+    // Set color to vel
+    colors[vIndex].rgb = 0.5*(normalize(newVel) + vec3(1.0));
 }
