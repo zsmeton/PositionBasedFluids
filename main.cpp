@@ -531,11 +531,7 @@ void setupParticleData() {
     }
 }
 
-// load in our model data to VAOs and VBOs
-void setupBuffers() {
-    // Load data in for material reader
-    matReader.loadMaterials("materials.mat");
-
+void setupUBOs() {
     //------------ BEGIN UBOS ----------
     // setup UBs
     // Set up UBO binding numbers
@@ -633,7 +629,9 @@ void setupBuffers() {
                           fluidUpdateProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
 
     //------------ END UBOS ----------
+}
 
+void setupSSBOs() {
     //------------ START SSBOs --------
     /// Index SSBO
     // generate, bind, and buffer data
@@ -756,7 +754,9 @@ void setupBuffers() {
 
 
     //------------ END SSBOs --------
+}
 
+void setupVAOs() {
     // generate our vertex array object descriptors
     glGenVertexArrays(3, vaods);
     // will be used to store VBO descriptors for ARRAY_BUFFER and ELEMENT_ARRAY_BUFFER
@@ -835,6 +835,18 @@ void setupBuffers() {
     glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6,
                           (void *) (3 * sizeof(float)));
     //------------  END  GROUND VAO------------
+}
+
+// load in our model data to VAOs and VBOs
+void setupBuffers() {
+    // Load data in for material reader
+    matReader.loadMaterials("materials.mat");
+    // UBOs
+    setupUBOs();
+    // SSBOs
+    setupSSBOs();
+    // VAOs
+    setupVAOs();
 }
 
 void setupFonts() {
