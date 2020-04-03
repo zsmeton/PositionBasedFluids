@@ -25,30 +25,25 @@ layout(shared, binding = 1) uniform Material{
 layout(location=0) out vec4 fragColorOut;
 
 
-// ***** FRAGMENT SHADER SUBROUTINES *****
-subroutine float calculateSpecular(vec3, vec3, vec3);
-layout(location = 0) subroutine uniform calculateSpecular specularCalculator ;
+// ***** FRAGMENT SHADER HELPER FUNCTIONS *****
+/*! Use blinn-phong illumination
+ * @param rh reflection or halfway vector
+ * @param n normal vector
+ * @param c camera vector
+ */
+float blinnPhong(vec3 light, vec3 normal, vec3 camera){
+    vec3 halfwayDir = normalize(light + camera);
+    return dot(camera, halfwayDir);
+}
 
 /*! Use phong illumination
  * @param rh reflection or halfway vector
  * @param n normal vector
  * @param c camera vector
  */
-subroutine(calculateSpecular)
 float phong(vec3 light, vec3 normal, vec3 camera){
-    vec3 halfwayDir = normalize(light + camera);
-    return dot(camera, halfwayDir);
-}
-
-/*! Use blinn-phong illumination
- * @param rh reflection or halfway vector
- * @param n normal vector
- * @param c camera vector
- */
-subroutine(calculateSpecular)
-float blinnPhong(vec3 light, vec3 normal, vec3 camera){
     vec3 reflectDir = reflect(-light, normal);
-    return dot(camera,reflectDir);
+    return dot(camera, reflectDir);
 }
 
 void main() {
@@ -70,7 +65,7 @@ void main() {
     // Calculate specular component
     vec4 specular = vec4(0.0);
     if( sDotN > 0.0 )
-    specular = light.specular * mat.specular * pow( max( 0.0, specularCalculator( lightVec2, normalVec2,  camVec2)), mat.shininess );
+    specular = light.specular * mat.specular * pow(max(0.0, phong(lightVec2, normalVec2, camVec2)), mat.shininess);
 
     // Sum components
     fragColorOut = diffuse + ambient + specular;

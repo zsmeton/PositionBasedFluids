@@ -123,6 +123,12 @@ const string LIGHT_MATERIAL = "white_light";
 // Lighting
 const float LIGHT_SIZE = 6.0f;
 
+// spheres
+const float SPHERE_RADIUS = 0.05f;
+const int SPHERE_SECTORS = 24;
+const int SPHERE_STACKS = 10;
+std::vector<int> indices;
+
 
 /// OTHER PARAMS ///
 GLint windowWidth, windowHeight;
@@ -153,13 +159,6 @@ const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2;
 GLuint vaods[3];
 GLuint lightVbod;
 
-// Subroutines
-struct PhongSubroutines {
-    GLuint setting;
-    GLuint phong;
-    GLuint blinnPhong;
-} phongSubroutines;
-
 // UBOS
 struct ShaderUniformBuffer {
     GLuint blockBinding;
@@ -185,6 +184,20 @@ struct ParticleShaderAttributeLocations {
     GLint velocity = 2;
     GLint color = 3;
 } particleShaderAttribLocs;
+
+struct SphereAttributes {
+    GLuint vaod;
+    GLuint vbodPos;
+    GLuint vbodNormal;
+    GLuint vbodIndex;
+} sphereAttributes;
+
+struct SphereAttributeLocations {
+    GLint position = 0;
+    GLint normal = 1;
+    GLint color = 2;
+    GLint modelOffset = 3;
+} sphereAttribLocs;
 
 // SSBOS and Textures
 /*
@@ -314,14 +327,6 @@ static void key_callback(GLFWwindow *window, int key, int scancode, int action, 
     }
     if (action == GLFW_PRESS) {
         switch (key) {
-            case GLFW_KEY_1:
-                // Use phong illumination
-                phongSubroutines.setting = phongSubroutines.phong;
-                break;
-            case GLFW_KEY_2:
-                // Use blinn-phong illumination
-                phongSubroutines.setting = phongSubroutines.blinnPhong;
-                break;
             default:
                 keys[key] = true;
                 break;
@@ -469,11 +474,6 @@ void setupShaders() {
     const char *hashShaderFilenames[] = {"shaders/fluidUpdate.glsl"};
     fluidUpdateProgram = new CSCI444::ShaderProgram(hashShaderFilenames, GL_VERTEX_SHADER_BIT);
 
-    // Query all of our subroutine indices
-    phongSubroutines.phong = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "phong");
-    phongSubroutines.blinnPhong = phongProgram->getSubroutineIndex(GL_FRAGMENT_SHADER, "blinnPhong");
-    phongSubroutines.setting = phongSubroutines.phong; // set default specular shader to be pass through
-
 
     // Setup text shader
     textShaderProgram = new CSCI444::ShaderProgram("shaders/textShaderv410.v.glsl",
@@ -593,6 +593,8 @@ void setupUBOs() {
                     matReader.getSwatch(LIGHT_MATERIAL).ambient);
     glBufferSubData(GL_UNIFORM_BUFFER, lightUniformBuffer.offsets[3], sizeof(float) * 3, &(lightPos)[0]);
     glUniformBlockBinding(phongProgram->getShaderProgramHandle(), phongProgram->getUniformBlockIndex("Light"),
+                          lightUniformBuffer.blockBinding);
+    glUniformBlockBinding(particleProgram->getShaderProgramHandle(), particleProgram->getUniformBlockIndex("Light"),
                           lightUniformBuffer.blockBinding);
 
     // Material Buffer
@@ -835,6 +837,117 @@ void setupVAOs() {
     glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6,
                           (void *) (3 * sizeof(float)));
     //------------  END  GROUND VAO------------
+
+    //------------  BEGIN SPHERE VAO    ------------
+    // SOURCE: http://www.songho.ca/opengl/gl_sphere.html
+    std::vector<float> vertices;
+    std::vector<float> normals;
+
+    float x, y, z, xy;                              // vertex position
+    float nx, ny, nz, lengthInv = 1.0f / SPHERE_RADIUS;    // vertex normal
+
+    float sectorStep = 2 * M_PI / SPHERE_SECTORS;
+    float stackStep = M_PI / SPHERE_STACKS;
+    float sectorAngle, stackAngle;
+
+    for (int i = 0; i <= SPHERE_STACKS; ++i) {
+        stackAngle = M_PI / 2 - i * stackStep;        // starting from pi/2 to -pi/2
+        xy = SPHERE_RADIUS * cosf(stackAngle);             // r * cos(u)
+        z = SPHERE_RADIUS * sinf(stackAngle);              // r * sin(u)
+
+        // add (sectorCount+1) vertices per stack
+        // the first and last vertices have same position and normal, but different tex coords
+        for (int j = 0; j <= SPHERE_SECTORS; ++j) {
+            sectorAngle = j * sectorStep;           // starting from 0 to 2pi
+
+            // vertex position (x, y, z)
+            x = xy * cosf(sectorAngle);             // r * cos(u) * cos(v)
+            y = xy * sinf(sectorAngle);             // r * cos(u) * sin(v)
+            vertices.push_back(x);
+            vertices.push_back(y);
+            vertices.push_back(z);
+
+            // normalized vertex normal (nx, ny, nz)
+            nx = x * lengthInv;
+            ny = y * lengthInv;
+            nz = z * lengthInv;
+            normals.push_back(nx);
+            normals.push_back(ny);
+            normals.push_back(nz);
+        }
+    }
+
+
+    int k1, k2;
+    for (int i = 0; i < SPHERE_STACKS; ++i) {
+        k1 = i * (SPHERE_SECTORS + 1);     // beginning of current stack
+        k2 = k1 + SPHERE_SECTORS + 1;      // beginning of next stack
+
+        for (int j = 0; j < SPHERE_SECTORS; ++j, ++k1, ++k2) {
+            // 2 triangles per sector excluding first and last stacks
+            // k1 => k2 => k1+1
+            if (i != 0) {
+                indices.push_back(k1);
+                indices.push_back(k2);
+                indices.push_back(k1 + 1);
+            }
+
+            // k1+1 => k2 => k2+1
+            if (i != (SPHERE_STACKS - 1)) {
+                indices.push_back(k1 + 1);
+                indices.push_back(k2);
+                indices.push_back(k2 + 1);
+            }
+        }
+    }
+
+    // generate our vertex array object descriptors
+    glGenVertexArrays(1, &sphereAttributes.vaod);
+    glBindVertexArray(sphereAttributes.vaod);
+
+    // Position data
+    glGenBuffers(1, &sphereAttributes.vbodPos);
+    // bind the VBO for our Sphere Array Buffer
+    glBindBuffer(GL_ARRAY_BUFFER, sphereAttributes.vbodPos);
+    // send the data to the GPU
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * vertices.size(), &vertices[0], GL_STATIC_DRAW);
+    // enable our position attribute
+    glEnableVertexAttribArray(sphereAttribLocs.position);
+    // map the position attribute to data within our buffer
+    glVertexAttribPointer(sphereAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void *) 0);
+
+    // Normal data
+    glGenBuffers(1, &sphereAttributes.vbodNormal);
+    glBindBuffer(GL_ARRAY_BUFFER, sphereAttributes.vbodNormal);
+    // send the data to the GPU
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * normals.size(), &normals[0], GL_STATIC_DRAW);
+    // enable our normal attribute
+    glEnableVertexAttribArray(sphereAttribLocs.normal);
+    // map the normal attribute to data within our buffer
+    glVertexAttribPointer(sphereAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 3, (void *) 0);
+
+    // Color data
+    // Use the particle color for the model color
+    glBindBuffer(GL_ARRAY_BUFFER, particleSSBOs.color);
+    // enable vertex attribute
+    glEnableVertexAttribArray(sphereAttribLocs.color);
+    glVertexAttribPointer(sphereAttribLocs.color, 4, GL_FLOAT, GL_FALSE, sizeof(float) * 4, (void *) 0);
+    glVertexAttribDivisor(sphereAttribLocs.color, 1);
+
+    // Position data
+    // Use the particle position vector for the model offset
+    glBindBuffer(GL_ARRAY_BUFFER, particleSSBOs.position);
+    // enable vertex attribute
+    glEnableVertexAttribArray(sphereAttribLocs.modelOffset);
+    glVertexAttribPointer(sphereAttribLocs.modelOffset, 4, GL_FLOAT, GL_FALSE, sizeof(float) * 4, (void *) 0);
+    glVertexAttribDivisor(sphereAttribLocs.modelOffset, 1);
+
+    // bind the VBO for our Sphere Element Array Buffer
+    glGenBuffers(1, &sphereAttributes.vbodIndex);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sphereAttributes.vbodIndex);
+    // send the data to the GPU
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(int) * indices.size(), &indices[0], GL_STATIC_DRAW);
+    //------------  END SPHERE VAO ------------
 }
 
 // load in our model data to VAOs and VBOs
@@ -1178,16 +1291,15 @@ void renderScene(GLFWwindow *window) {
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
 
-    glPointSize(2);
     particleProgram->useProgram();
-    glBindVertexArray(vaods[PARTICLES]);
-    glDrawArrays(GL_POINTS, 0, NUM_PARTICLES);
+    // bind our sphere VAO
+    glBindVertexArray(sphereAttributes.vaod);
+    // draw our sphere!
+    glDrawElementsInstanced(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0, NUM_PARTICLES);
 
     /***** GROUND *****/
     // Set shader
     phongProgram->useProgram();
-    // set up the subroutines
-    glUniformSubroutinesuiv(GL_FRAGMENT_SHADER, 1, &phongSubroutines.setting);
     // Matricies
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
@@ -1376,40 +1488,31 @@ int main(int argc, char *argv[]) {
         sprintf(fpsStr, "%.3f frames/sec (Avg: %.3f)", fps, fpsAvg);
         render_text(fpsStr, face, -1 + 8 * sx, 1 - 30 * sy, sx, sy);
 
-        char illuminationStr[100];
-        if (phongSubroutines.setting == phongSubroutines.phong) {
-            sprintf(illuminationStr, "(1-2) Illumination: Phong");
-        } else {
-            sprintf(illuminationStr, "(1-2) Illumination: Blinn-Phong");
-        }
-        render_text(illuminationStr, face, -1 + 8 * sx, 1 - 50 * sy, sx, sy);
-
-
         char restStr[100];
         int den = restDensity;
         sprintf(restStr, "(-e/r+) Rest Density: %d", den);
-        render_text(restStr, face, -1 + 8 * sx, 1 - 70 * sy, sx, sy);
+        render_text(restStr, face, -1 + 8 * sx, 1 - 50 * sy, sx, sy);
 
         char epsStr[100];
         int eps = epsilon;
         sprintf(epsStr, "(-d/f+) Epsilon: %d", eps);
-        render_text(epsStr, face, -1 + 8 * sx, 1 - 90 * sy, sx, sy);
+        render_text(epsStr, face, -1 + 8 * sx, 1 - 70 * sy, sx, sy);
 
         char supportStr[100];
         sprintf(supportStr, "(-t/y+) Support Radius: %f", supportRad);
-        render_text(supportStr, face, -1 + 8 * sx, 1 - 110 * sy, sx, sy);
+        render_text(supportStr, face, -1 + 8 * sx, 1 - 90 * sy, sx, sy);
 
         char vEpsStr[100];
         sprintf(vEpsStr, "(-c/v+) Vort Epsilon: %f", vEps);
-        render_text(vEpsStr, face, -1 + 8 * sx, 1 - 130 * sy, sx, sy);
+        render_text(vEpsStr, face, -1 + 8 * sx, 1 - 110 * sy, sx, sy);
 
         char scoorStr[100];
         sprintf(scoorStr, "(-7/8+) Tensile Instability: %f", sCorr);
-        render_text(scoorStr, face, -1 + 8 * sx, 1 - 150 * sy, sx, sy);
+        render_text(scoorStr, face, -1 + 8 * sx, 1 - 130 * sy, sx, sy);
 
         char xsphStr[100];
         sprintf(xsphStr, "(-4/5+) XSPH: %f", kXsph);
-        render_text(xsphStr, face, -1 + 8 * sx, 1 - 170 * sy, sx, sy);
+        render_text(xsphStr, face, -1 + 8 * sx, 1 - 150 * sy, sx, sy);
 
 
         // swap the front and back buffers
