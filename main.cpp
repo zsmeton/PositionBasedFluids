@@ -37,7 +37,7 @@
 #include "include/MaterialReader.h"
 #include "include/ShaderProgram4.hpp"
 
-#define DEBUG 1
+#define DEBUG 0
 
 //*************************************************************************************
 
@@ -86,8 +86,8 @@ const uint HASH_MAP_SIZE = NUM_PARTICLES;
 const uint MAX_NEIGHBORS = 500;
 
 // Source: http://graphics.stanford.edu/courses/cs348c/PA1_PBF2016/index.html
-const uint SUBSTEPS = 2;
-const uint SOLVER_ITERS = 4;
+const uint SUBSTEPS = 1;
+const uint SOLVER_ITERS = 8;
 const float REST_DENSITY = 600.0;
 const float SUPPORT_RADIUS = 0.5;
 const float EPSILON = 6000.0;
@@ -101,7 +101,6 @@ const float DCORR = KPOLY * pow(pow(SUPPORT_RADIUS, 2) - pow(PRESSURE_RADIUS, 2)
 const int PCORR = 4;
 const float KXSPH = 0.003;
 const float VORT_EPSILON = 0.0013;
-
 
 float restDensity = REST_DENSITY;
 float epsilon = EPSILON;
@@ -1044,20 +1043,17 @@ void debugSpacialHash() {
     GLint bufMask = GL_MAP_READ_BIT;
     HashType *hash = (HashType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType) * HASH_MAP_SIZE,
                                                    bufMask);
-    /*
     int h = 0;
     for (int i = 0; i < HASH_MAP_SIZE; i++) {
         hashMap[i] = hash[i];
         if (hashMap[i].headNodeIndex != 0xffffffff)
             h++;
     }
-    */
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-    //printf("Hash Cells Used: %d\n", h);
+    printf("Hash Cells Used: %d\n", h);
 
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.linkedList);
-    /*
     NodeType *list = (NodeType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(NodeType) * NUM_PARTICLES,
                                                    bufMask);
     int l = 0;
@@ -1107,7 +1103,6 @@ void debugSpacialHash() {
     printf("Infinite Loops Found In Linked List: %d\n", invalidCount);
     printf("Max Number in Hash Cell (One Hash Cell): %d\n", maxNumHashCell);
     printf("Max Number in Hash Cell Count (One Hash Cell): %d\n", maxCount);
-    */
 }
 
 void debugNeighborFind() {
@@ -1189,8 +1184,8 @@ void fluidUpdate() {
 
     if (dt > MAX_DELTA_T) {
         dt = MAX_DELTA_T;
-        simTime += dt;
     }
+    simTime += dt;
 
     // compute perspective and view for neighbor/ signed distance field rendering
     glm::mat4 opMtx, ovMtx, mMtx;
@@ -1241,14 +1236,16 @@ void fluidUpdate() {
     glMemoryBarrier(GL_ALL_BARRIER_BITS); // Make sure all data was processes
     glDisable(GL_RASTERIZER_DISCARD); // Renable rasterization
 
+    // Bind hash map buffer (No idea why I have to do this but with out this, the fluid simulation does not work)
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.hashMap);
+    HashType *hash = (HashType *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sizeof(HashType) * HASH_MAP_SIZE,
+                                                   GL_MAP_READ_BIT);
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+
 #if DEBUG
     debugSpacialHash();
-    //debugNeighborFind();
+    debugNeighborFind();
 #endif
-
-    //glBindBuffer(GL_SHADER_STORAGE_BUFFER, particleSSBOs.position);
-    //glBindBuffer(GL_COPY_READ_BUFFER, particleSSBOs.positionStar);
-    //glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_SHADER_STORAGE_BUFFER, 0, 0, sizeof(Float4)*NUM_PARTICLES);
 }
 
 // handles drawing everything to our buffer

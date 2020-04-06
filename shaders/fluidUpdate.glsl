@@ -378,7 +378,7 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
         deltaPos.x = 5.0 - newPos.x - fluid.collisionEpsilon;
     }
     // Check front wall
-    float wallZ = -5.0 + sin(10.0*fluid.time);
+    float wallZ = -5.0 + 2.0*sin(5.0*fluid.time);
     if (newPos.z < wallZ){
         deltaPos.z = wallZ - newPos.z + fluid.collisionEpsilon;
     } else if (newPos.z > 5.0){
