@@ -151,12 +151,14 @@ uint neighborFindCell(uint neighborCount, int hashIdx){
     return neighborCount;
 }
 
+// Get hashes of neighboring cell based on position and x,y,z offsets
 int getNeighborCellHash(vec3 pos, int xOffset, int yOffset, int zOffset){
     return int((int((floor(pos.x/fluid.supportRadius) + xOffset) * P1) ^
     int((floor(pos.y/fluid.supportRadius) + yOffset) * P2) ^
     int((floor(pos.z/fluid.supportRadius) + zOffset) * P3)) % fluid.mapSize);
 }
 
+// Returns a list of the neighboring hash cells
 int[27] getNeighborCellHashes(){
     // Get position
     vec3 pos = vec3(newPositions[vIndex]);
@@ -204,7 +206,7 @@ uint findNeighbors(){
     return numNeighbors;
 }
 
-
+// Calculates the magnitude of the vector squared
 float squareMagnitude(vec3 vec){
     return vec.x*vec.x + vec.y*vec.y + vec.z*vec.z;
 }
