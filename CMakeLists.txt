@@ -8,5 +8,5 @@ include_directories(/home/zsmeton/Dropbox/Coding/CS444/SemesterProject/include)
 find_package(glfw3 3.3 REQUIRED)
 find_package(OpenGL REQUIRED)
 
-add_executable(WaterSimulator main.cpp ParticleSystem.h)
+add_executable(WaterSimulator main.cpp)
 target_link_libraries(WaterSimulator SOIL3 glfw GLEW GL freetype)

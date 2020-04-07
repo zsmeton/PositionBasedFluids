@@ -36,6 +36,7 @@
 
 #include "include/MaterialReader.h"
 #include "include/ShaderProgram4.hpp"
+#include "include/ModelLoaderSDF.hpp"
 
 #define DEBUG 0
 
@@ -88,6 +89,7 @@ const uint MAX_NEIGHBORS = 500;
 // Source: http://graphics.stanford.edu/courses/cs348c/PA1_PBF2016/index.html
 const uint SUBSTEPS = 1;
 const uint SOLVER_ITERS = 8;
+const float PARTICLE_RADIUS = 0.05f;
 const float REST_DENSITY = 600.0;
 const float SUPPORT_RADIUS = 0.5;
 const float EPSILON = 6000.0;
@@ -123,10 +125,13 @@ const string LIGHT_MATERIAL = "white_light";
 const float LIGHT_SIZE = 6.0f;
 
 // spheres
-const float SPHERE_RADIUS = 0.05f;
+const float SPHERE_RADIUS = PARTICLE_RADIUS;
 const int SPHERE_SECTORS = 24;
 const int SPHERE_STACKS = 10;
 std::vector<int> indices;
+
+// Objects
+const string OBJECT = "models/peashooter.obj";
 
 
 /// OTHER PARAMS ///
@@ -239,6 +244,12 @@ struct FluidSSBOLocations {
     GLint counter = 0;
 } fluidSSBOLocs;
 
+struct SDFSSBOLocations {
+    GLint sdf = 10;
+    GLint vertex = 11;
+    GLint index = 12;
+} sdfSSBOLocs;
+
 struct NeighborTextures {
     GLuint hashMap;
 } neighborTexs;
@@ -275,6 +286,9 @@ NodeType linkedList[NUM_PARTICLES];
 NodeType listClear[NUM_PARTICLES];
 NeighborType neighborData[NUM_PARTICLES];
 
+/// SDF ///
+CSCI444::ModelLoaderSDF *modelLoader = NULL;
+
 /// TEXT ///
 FT_Face face;
 GLuint font_texture_handle, text_vao_handle, text_vbo_handle;
@@ -290,6 +304,7 @@ struct TextShaderUniformLocations {
 struct TextShaderAttributeLocations {
     GLint text_texCoord_location;
 } textShaderAttribLocs;
+
 
 GLboolean mackHack = false;
 
@@ -470,7 +485,7 @@ void setupShaders() {
     const char *particleShaderFilenames[] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
     particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames,
                                                  GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
-    const char *hashShaderFilenames[] = {"shaders/fluidUpdate.glsl"};
+    const char *hashShaderFilenames[] = {"shaders/fluidUpdate.v.glsl"};
     fluidUpdateProgram = new CSCI444::ShaderProgram(hashShaderFilenames, GL_VERTEX_SHADER_BIT);
 
 
@@ -949,6 +964,19 @@ void setupVAOs() {
     //------------  END SPHERE VAO ------------
 }
 
+void setupSDFs() {
+    // Load model
+    modelLoader = new CSCI444::ModelLoaderSDF(OBJECT.c_str());
+
+    // Set data
+    modelLoader->setSDFLocation(sdfSSBOLocs.sdf);
+    modelLoader->setVertexLocation(sdfSSBOLocs.vertex);
+    modelLoader->setIndexLocation(sdfSSBOLocs.index);
+
+    // Calculate SDF
+    modelLoader->calculateSignedDistanceFieldCPU(0.5, 1.0, glm::mat4(1.0));
+}
+
 // load in our model data to VAOs and VBOs
 void setupBuffers() {
     // Load data in for material reader
@@ -959,6 +987,8 @@ void setupBuffers() {
     setupSSBOs();
     // VAOs
     setupVAOs();
+    // SDFs
+    setupSDFs();
 }
 
 void setupFonts() {
