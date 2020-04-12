@@ -39,7 +39,8 @@
 #include "include/ModelLoaderSDF.hpp"
 
 #define DEBUG 0
-#define SDF 0
+#define SDF 1
+#define WATER 1
 
 //*************************************************************************************
 
@@ -68,6 +69,12 @@ struct TexVertex {
 };
 // specify our SDF Plane Vertex Information
 const TexVertex sdfPlaneVertices[] = {
+        {-30.0f, -5.0f, 0.0f, -30.0f, -5.0f}, // 0 - BL
+        {30.0f,  -5.0f, 0.0f, 30.0f,  -5.0f}, // 1 - BR
+        {30.0f,  10.0f, 0.0f, 30.0f,  10.0f}, // 2 - TR
+        {-30.0f, 10.0f, 0.0f, -30.0f, 10.0f}  // 3 - TL
+};
+TexVertex sdfPlaneVerticesT[] = {
         {-30.0f, -5.0f, 0.0f, -30.0f, -5.0f}, // 0 - BL
         {30.0f,  -5.0f, 0.0f, 30.0f,  -5.0f}, // 1 - BR
         {30.0f,  10.0f, 0.0f, 30.0f,  10.0f}, // 2 - TR
@@ -181,12 +188,14 @@ CSCI444::ShaderProgram *applyDeltaPProgram = NULL;
 CSCI444::ShaderProgram *vorticityProgram = NULL;
 CSCI444::ShaderProgram *xsphProgram = NULL;
 CSCI444::ShaderProgram *sdfVisProgram = NULL;
+CSCI444::ShaderProgram *sdfProgram = NULL;
 
 /// DATA ///
 // VAO/VBOs
 const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2, SDF_PLANE = 3;
 GLuint vaods[4];
 GLuint lightVbod;
+GLuint planeVbod;
 
 // UBOS
 struct ShaderUniformBuffer {
@@ -282,8 +291,7 @@ struct FluidSSBOLocations {
 
 struct SDFSSBOLocations {
     GLint sdf = 11;
-    GLint vertex = 12;
-    GLint index = 13;
+    GLint triangles = 12;
 } sdfSSBOLocs;
 
 
@@ -321,6 +329,7 @@ NeighborType neighborData[NUM_PARTICLES];
 
 /// SDF ///
 CSCI444::ModelLoaderSDF *modelLoader = NULL;
+glm::mat4 modelLoaderMtx;
 
 /// TEXT ///
 FT_Face face;
@@ -518,23 +527,25 @@ void setupShaders() {
     const char *particleShaderFilenames[] = {"shaders/particle.v.glsl", "shaders/particle.f.glsl"};
     particleProgram = new CSCI444::ShaderProgram(particleShaderFilenames,
                                                  GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
-    const char *hashShaderFilenames[] = {"shaders/spacialHash.v.glsl"};
+    const char *hashShaderFilenames[] = {"shaders/fluidShaders/spacialHash.v.glsl"};
     spacialHashProgram = new CSCI444::ShaderProgram(hashShaderFilenames, GL_VERTEX_SHADER_BIT);
-    const char *neighborFindFilenames[] = {"shaders/neighborFind.c.glsl"};
+    const char *neighborFindFilenames[] = {"shaders/fluidShaders/neighborFind.c.glsl"};
     neighborFindProgram = new CSCI444::ShaderProgram(neighborFindFilenames, GL_COMPUTE_SHADER_BIT);
-    const char *lambdaFilenames[] = {"shaders/lambda.c.glsl"};
+    const char *lambdaFilenames[] = {"shaders/fluidShaders/lambda.c.glsl"};
     lambdaProgram = new CSCI444::ShaderProgram(lambdaFilenames, GL_COMPUTE_SHADER_BIT);
-    const char *deltaPFilenames[] = {"shaders/deltaP.c.glsl"};
+    const char *deltaPFilenames[] = {"shaders/fluidShaders/deltaP.c.glsl"};
     deltaPProgram = new CSCI444::ShaderProgram(deltaPFilenames, GL_COMPUTE_SHADER_BIT);
-    const char *applyDeltaPFilenames[] = {"shaders/applyDeltaP.c.glsl"};
+    const char *applyDeltaPFilenames[] = {"shaders/fluidShaders/applyDeltaP.c.glsl"};
     applyDeltaPProgram = new CSCI444::ShaderProgram(applyDeltaPFilenames, GL_COMPUTE_SHADER_BIT);
-    const char *vorticityFilenames[] = {"shaders/vorticity.c.glsl"};
+    const char *vorticityFilenames[] = {"shaders/fluidShaders/vorticity.c.glsl"};
     vorticityProgram = new CSCI444::ShaderProgram(vorticityFilenames, GL_COMPUTE_SHADER_BIT);
-    const char *xsphFilenames[] = {"shaders/xsph.c.glsl"};
+    const char *xsphFilenames[] = {"shaders/fluidShaders/xsph.c.glsl"};
     xsphProgram = new CSCI444::ShaderProgram(xsphFilenames, GL_COMPUTE_SHADER_BIT);
 
     const char *sdfVisFilenames[] = {"shaders/visSDF.v.glsl", "shaders/visSDF.f.glsl"};
     sdfVisProgram = new CSCI444::ShaderProgram(sdfVisFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
+    const char *sdfFilenames[] = {"shaders/signedDistanceField.c.glsl"};
+    sdfProgram = new CSCI444::ShaderProgram(sdfFilenames, GL_COMPUTE_SHADER_BIT);
 
     // Setup text shader
     textShaderProgram = new CSCI444::ShaderProgram("shaders/textShaderv410.v.glsl",
@@ -556,7 +567,7 @@ void setupParticleData() {
     // randomly initialize particle data
     for (GLuint i = 0; i < NUM_PARTICLES; i++) {
         particleData.position[i].x = ((rand() % 1000) / 100.0) - 5;
-        particleData.position[i].y = ((rand() % 1000) / 100.0) - 5;
+        particleData.position[i].y = ((rand() % 1000) / 100.0) - 2.0;
         particleData.position[i].z = ((rand() % 1000) / 100.0) - 5;
         particleData.velocity[i].x = 0.0;
         particleData.velocity[i].y = 0.0;
@@ -703,6 +714,8 @@ void setupUBOs() {
                           vorticityProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
     glUniformBlockBinding(xsphProgram->getShaderProgramHandle(),
                           xsphProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
+    glUniformBlockBinding(sdfVisProgram->getShaderProgramHandle(),
+                          sdfVisProgram->getUniformBlockIndex("FluidDynamics"), fluidUniformBuffer.blockBinding);
     //------------ END UBOS ----------
 }
 
@@ -859,7 +872,6 @@ void setupSSBOs() {
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, neighborSSBOs.neighborData);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.neighbors, neighborSSBOs.neighborData);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(NeighborType) * NUM_PARTICLES, neighborData, GL_DYNAMIC_DRAW);
-    printf("Neighbor Type Size: %lu\n", sizeof(NeighborType));
     /// Atomic SSBO
     // generate, bind, and buffer data
     glGenBuffers(1, &neighborSSBOs.counter);
@@ -955,12 +967,13 @@ void setupVAOs() {
 
     // generate our vertex buffer object descriptors for the SDF_PLANE
     glGenBuffers(2, vbods);
-    // bind the VBO for our Ground Array Buffer
-    glBindBuffer(GL_ARRAY_BUFFER, vbods[0]);
+    glGenBuffers(1, &planeVbod);
+    // bind the VBO for our SDF Plane Array Buffer
+    glBindBuffer(GL_ARRAY_BUFFER, planeVbod);
     // send the data to the GPU
-    glBufferData(GL_ARRAY_BUFFER, sizeof(sdfPlaneVertices), sdfPlaneVertices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(sdfPlaneVertices), sdfPlaneVertices, GL_DYNAMIC_DRAW);
 
-    // bind the VBO for our Ground Element Array Buffer
+    // bind the VBO for our SDF Plane Element Array Buffer
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbods[1]);
     // send the data to the GPU
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(sdfPlaneIndices), sdfPlaneIndices, GL_STATIC_DRAW);
@@ -1095,11 +1108,12 @@ void setupSDFs() {
 
     // Set data
     modelLoader->setSDFLocation(sdfSSBOLocs.sdf);
-    modelLoader->setVertexLocation(sdfSSBOLocs.vertex);
-    modelLoader->setIndexLocation(sdfSSBOLocs.index);
+    modelLoader->setTriangleLocation(sdfSSBOLocs.triangles);
 
     // Calculate SDF
-    modelLoader->calculateSignedDistanceFieldCPU(0.5, 1.0, glm::mat4(1.0));
+    //modelLoader->calculateSignedDistanceFieldCPU(0.5, 1.0, glm::mat4(1.0));
+    modelLoaderMtx = glm::translate(glm::mat4(1.0), glm::vec3(0.0, -3.1, 0.0));
+    modelLoader->calculateSignedDistanceField(sdfProgram, 0.1, 0.1, modelLoaderMtx);
 }
 
 // load in our model data to VAOs and VBOs
@@ -1348,6 +1362,7 @@ void fluidUpdate() {
     count++;
 
     /***** WATER PARTICLES *****/
+#if WATER
     /// Buffers
     // Bind buffers
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, fluidSSBOLocs.position, particleSSBOs.position);
@@ -1447,6 +1462,7 @@ void fluidUpdate() {
 
     printf("Hash: %f sec \tNeighbor: %f sec \tConstraint: %f sec\tVelocity: %f sec\n", spacial_time - start_time,
            neighbor_time - spacial_time, constraint_time - neighbor_time, vel_time - constraint_time);
+#endif
 }
 
 // handles drawing everything to our buffer
@@ -1455,7 +1471,6 @@ void renderScene(GLFWwindow *window) {
     for (int i = 0; i < SUBSTEPS; i++) {
         fluidUpdate();
     }
-
 
     /***** MATRICES *****/
     // query our current window size, determine the aspect ratio, and set our viewport size
@@ -1482,6 +1497,7 @@ void renderScene(GLFWwindow *window) {
     glm::mat4 nMtx = glm::transpose(glm::inverse(mvMtx));
 
     /// Draw particles
+#if WATER
     // Matrices
     glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
     glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
@@ -1494,7 +1510,7 @@ void renderScene(GLFWwindow *window) {
     glBindVertexArray(sphereAttributes.vaod);
     // draw our sphere!
     glDrawElementsInstanced(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0, NUM_PARTICLES);
-
+#endif
     /***** GROUND *****/
     // Set shader
     phongProgram->useProgram();
@@ -1524,25 +1540,60 @@ void renderScene(GLFWwindow *window) {
     // draw our ground!
     glDrawElements(GL_TRIANGLES, sizeof(groundIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
 
-    /***** SDF *****/
 #if SDF
+    /***** SDF *****//*
+    // Show the sdf using a sliding plane
     sdfVisProgram->useProgram();
     // bind our plane VAO
     glBindVertexArray(vaods[SDF_PLANE]);
+    // Move the plane
+    sdfPlaneVerticesT[0].pz = sdfPlaneVertices[0].pz + 3.0*glm::sin(0.2*simTime);
+    sdfPlaneVerticesT[1].pz = sdfPlaneVertices[1].pz + 3.0*glm::sin(0.2*simTime);
+    sdfPlaneVerticesT[2].pz = sdfPlaneVertices[2].pz + 3.0*glm::sin(0.2*simTime);
+    sdfPlaneVerticesT[3].pz = sdfPlaneVertices[3].pz + 3.0*glm::sin(0.2*simTime);
+    // bind the VBO for our SDF Plane Array Buffer
+    glBindBuffer(GL_ARRAY_BUFFER, planeVbod);
+    // send the data to the GPU
+    glBufferData(GL_ARRAY_BUFFER, sizeof(sdfPlaneVerticesT), sdfPlaneVerticesT, GL_DYNAMIC_DRAW);
     // draw our ground!
     glDrawElements(GL_TRIANGLES, sizeof(sdfPlaneIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
-
+    */
     /**** OBJECT ****/
     // Material settings
     glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4,
-                    matReader.getSwatch(FLOOR_MATERIAL).diffuse);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4,
-                    matReader.getSwatch(FLOOR_MATERIAL).specular);
+    glm::vec4 diffuse;
+    diffuse.r = matReader.getSwatch(FLOOR_MATERIAL).diffuse[0];
+    diffuse.g = matReader.getSwatch(FLOOR_MATERIAL).diffuse[1];
+    diffuse.b = matReader.getSwatch(FLOOR_MATERIAL).diffuse[2];
+    diffuse.a = 1.0;
+    glm::vec4 ambient;
+    ambient.r = matReader.getSwatch(FLOOR_MATERIAL).ambient[0];
+    ambient.g = matReader.getSwatch(FLOOR_MATERIAL).ambient[1];
+    ambient.b = matReader.getSwatch(FLOOR_MATERIAL).ambient[2];
+    ambient.a = 1.0;
+    glm::vec4 specular;
+    specular.r = matReader.getSwatch(FLOOR_MATERIAL).specular[0];
+    specular.g = matReader.getSwatch(FLOOR_MATERIAL).specular[1];
+    specular.b = matReader.getSwatch(FLOOR_MATERIAL).specular[2];
+    specular.a = 1.0;
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4, &(diffuse)[0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4, &(specular)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float),
                     matReader.getSwatch(FLOOR_MATERIAL).shininess);
-    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float) * 4,
-                    matReader.getSwatch(FLOOR_MATERIAL).ambient);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float) * 4, &(ambient)[0]);
+
+    // Matrix settings
+    // precompute the modelview matrix
+    mvMtx = vMtx * modelLoaderMtx;
+    // precompute the normal matrix
+    nMtx = glm::transpose(glm::inverse(mvMtx));
+    glBindBuffer(GL_UNIFORM_BUFFER, matriciesUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[0], sizeof(glm::mat4), &(mvMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[1], sizeof(glm::mat4), &(vMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[2], sizeof(glm::mat4), &(pMtx)[0][0]);
+    glBufferSubData(GL_UNIFORM_BUFFER, matriciesUniformBuffer.offsets[3], sizeof(glm::mat4), &(nMtx)[0][0]);
+
+    // Draw
     phongProgram->useProgram();
     modelLoader->draw(grndShaderAttribLocs.position, grndShaderAttribLocs.normal);
 #endif

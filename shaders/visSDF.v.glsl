@@ -7,6 +7,7 @@ layout(location=2) in vec2 vTex;
 
 // ***** VERTEX SHADER OUTPUT *****
 layout(location=0) out vec2 fTex;
+layout(location=1) out vec3 fPos;
 
 out gl_PerVertex {
     vec4 gl_Position;
@@ -29,4 +30,5 @@ void main() {
     gl_Position = mtx.projection * posVec;
     // Pass along texCoord
     fTex = vTex;
+    fPos = vPos;
 }

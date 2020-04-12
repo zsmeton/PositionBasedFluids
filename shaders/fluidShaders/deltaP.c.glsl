@@ -43,6 +43,16 @@ struct NeighborType {
     uint neighboring[500];
 };
 
+struct SDFCell {
+    float distance;
+    vec4 normal;
+};
+
+struct BoundingBox {
+    vec4 frontLeftBottom;
+    vec4 backRightTop;
+};
+
 // ***** COMPUTE SHADER BUFFERS *****
 /*
     index = 0;
@@ -76,6 +86,13 @@ layout(std430, binding=7) buffer ColorBuf {
 
 layout(std430, binding=10) buffer NeighborDataBuf {
     NeighborType neighbors[];
+};
+
+layout(std430, binding=11) buffer SignedDistanceField {
+    BoundingBox boundingBox;
+    mat4 transformMtx;
+    uint xDim, yDim, zDim;
+    SDFCell cells [];
 };
 
 // ***** COMPUTE SHADER SUBROUTINES *****
@@ -130,6 +147,37 @@ vec3 deltaP(uint vIndex){
     return deltaPos / fluid.restDensity;
 }
 
+vec3 collideSDF(vec3 pos, vec3 deltaPos){
+    vec3 newPos = pos + deltaPos;
+
+    // Transform the position
+    vec3 tranPos = vec3(transformMtx*vec4(newPos, 1.0));
+    // Turn transformed position into indices
+    tranPos = vec3(floor(tranPos.x), floor(tranPos.y), floor(tranPos.z));
+    // Check if in the bounding box
+    if (tranPos.x < 0 || tranPos.x >= xDim){
+        return deltaPos;
+    }
+    if (tranPos.y < 0 || tranPos.y >= yDim){
+        return deltaPos;
+    }
+    if (tranPos.z < 0 || tranPos.z >= zDim){
+        return deltaPos;
+    }
+
+    // Get index from dimension indices
+    int index = int(tranPos.x + yDim * (tranPos.y + zDim * tranPos.z));
+    if (index < 0 || index > xDim * yDim * zDim){
+        return deltaPos;
+    }
+    // Get distance from sdf cells
+    if (cells[index].distance <= 0.05){
+        float delta = (0.05 - cells[index].distance) + fluid.collisionEpsilon;
+        return deltaPos + delta * vec3(cells[index].normal);
+    }
+    return deltaPos;
+}
+
 vec3 confineToBox(vec3 pos, vec3 deltaPos){
     vec3 newPos = pos + deltaPos;
 
@@ -165,6 +213,7 @@ void main() {
 
     // Collision detection and response
     dp = confineToBox(newPositions[vIndex].xyz, dp);
+    dp = collideSDF(newPositions[vIndex].xyz, dp);
 
     // Set delta p
     deltaPs[vIndex].xyz = dp;

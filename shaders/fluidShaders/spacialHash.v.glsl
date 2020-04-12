@@ -47,6 +47,15 @@ struct NeighborType {
     uint neighboring[500];
 };
 
+struct SDFCell {
+    float distance;
+    vec4 normal;
+};
+
+struct BoundingBox {
+    vec4 frontLeftBottom;
+    vec4 backRightTop;
+};
 // ***** VERTEX SHADER BUFFERS *****
 /*
     index = 0;
@@ -80,6 +89,13 @@ layout(std430, binding=9) buffer LinkedListBuf {
     NodeType nodes[];
 };
 
+layout(std430, binding=11) buffer SignedDistanceField {
+    BoundingBox boundingBox;
+    mat4 transformMtx;
+    uint xDim, yDim, zDim;
+    SDFCell cells [];
+};
+
 // ***** VERTEX SHADER SUBROUTINES *****
 // ***** VERTEX SHADER HELPER FUNCTIONS *****
 const int P1 = 73856093;
@@ -91,6 +107,37 @@ int spacialHash(float x, float y, float z){
     return int((int(floor(x/fluid.supportRadius) * P1) ^
     int(floor(y/fluid.supportRadius) * P2) ^
     int(floor(z/fluid.supportRadius) * P3)) % fluid.mapSize);
+}
+
+vec3 collideSDF(vec3 pos, vec3 deltaPos){
+    vec3 newPos = pos + deltaPos;
+
+    // Transform the position
+    vec3 tranPos = vec3(transformMtx*vec4(newPos, 1.0));
+    // Turn transformed position into indices
+    tranPos = vec3(floor(tranPos.x), floor(tranPos.y), floor(tranPos.z));
+    // Check if in the bounding box
+    if (tranPos.x < 0 || tranPos.x >= xDim){
+        return deltaPos;
+    }
+    if (tranPos.y < 0 || tranPos.y >= yDim){
+        return deltaPos;
+    }
+    if (tranPos.z < 0 || tranPos.z >= zDim){
+        return deltaPos;
+    }
+
+    // Get index from dimension indices
+    int index = int(tranPos.x + yDim * (tranPos.y + zDim * tranPos.z));
+    if (index < 0 || index > xDim * yDim * zDim){
+        return deltaPos;
+    }
+    // Get distance from sdf cells
+    if (cells[index].distance <= 0.05){
+        float delta = (0.05 - cells[index].distance) + fluid.collisionEpsilon;
+        return deltaPos + delta * vec3(cells[index].normal);
+    }
+    return deltaPos;
 }
 
 vec3 confineToBox(vec3 pos, vec3 deltaPos){
@@ -125,6 +172,7 @@ void main() {
     vec3 _vel = vec3(vVel) + fluid.dt *  vec3(0.0, -9.8, 0.0);
     vec3 _pos = vec3(vPos) + fluid.dt * _vel;// Set additional variable for memory access optimization
     _pos += confineToBox(_pos, vec3(0.0));
+    _pos += collideSDF(_pos, vec3(0.0));
     newPositions[vIndex].xyz = _pos;
     velocities[vIndex].xyz = (_pos-vec3(vPos)) / fluid.dt;
 
