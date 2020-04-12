@@ -61,6 +61,23 @@ const GLushort groundIndices[] = {
         0, 2, 1, 0, 3, 2
 };
 
+struct TexVertex {
+    GLfloat px, py, pz;    // point location x,y,z
+    GLfloat s, t;    // text coords s,t
+};
+// specify our SDF Plane Vertex Information
+const TexVertex sdfPlaneVertices[] = {
+        {-30.0f, -5.0f, 0.0f, -30.0f, -5.0f}, // 0 - BL
+        {30.0f,  -5.0f, 0.0f, 30.0f,  -5.0f}, // 1 - BR
+        {30.0f,  10.0f, 0.0f, 30.0f,  10.0f}, // 2 - TR
+        {-30.0f, 10.0f, 0.0f, -30.0f, 10.0f}  // 3 - TL
+};
+
+// specify our SDF Plane Index Ordering
+const GLushort sdfPlaneIndices[] = {
+        0, 2, 1, 0, 3, 2
+};
+
 struct character_info {
     GLfloat ax; // advance.x
     GLfloat ay; // advance.y
@@ -156,11 +173,12 @@ double lastTime = 0.0;
 CSCI444::ShaderProgram *phongProgram = NULL;
 CSCI444::ShaderProgram *particleProgram = NULL;
 CSCI444::ShaderProgram *fluidUpdateProgram = NULL;
+CSCI444::ShaderProgram *sdfVisProgram = NULL;
 
 /// DATA ///
 // VAO/VBOs
-const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2;
-GLuint vaods[3];
+const GLuint LIGHT = 0, GROUND = 1, PARTICLES = 2, SDF_PLANE = 3;
+GLuint vaods[4];
 GLuint lightVbod;
 
 // UBOS
@@ -180,7 +198,14 @@ ShaderUniformBuffer fluidUniformBuffer;
 struct GroundShaderAttributeLocations {
     GLint position = 0;
     GLint normal = 1;
+    GLint texCoord = 2;
 } grndShaderAttribLocs;
+
+struct PlaneShaderAttributeLocations {
+    GLint position = 0;
+    GLint normal = 1;
+    GLint texCoord = 2;
+} planeShaderAttribLocs;
 
 struct ParticleShaderAttributeLocations {
     GLint index = 0;
@@ -250,9 +275,6 @@ struct SDFSSBOLocations {
     GLint index = 12;
 } sdfSSBOLocs;
 
-struct NeighborTextures {
-    GLuint hashMap;
-} neighborTexs;
 
 // Particle Structs and Data
 struct Float4 {
@@ -487,6 +509,8 @@ void setupShaders() {
                                                  GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
     const char *hashShaderFilenames[] = {"shaders/fluidUpdate.v.glsl"};
     fluidUpdateProgram = new CSCI444::ShaderProgram(hashShaderFilenames, GL_VERTEX_SHADER_BIT);
+    const char *sdfVisFilenames[] = {"shaders/visSDF.v.glsl", "shaders/visSDF.f.glsl"};
+    sdfVisProgram = new CSCI444::ShaderProgram(sdfVisFilenames, GL_VERTEX_SHADER_BIT | GL_FRAGMENT_SHADER_BIT);
 
 
     // Setup text shader
@@ -517,6 +541,7 @@ void setupParticleData() {
         particleData.color[i].x = 0.0;
         particleData.color[i].y = 0.0;
         particleData.color[i].z = 1.0;
+        particleData.color[i].w = 1.0;
         particleData.idx[i] = i;
     }
 
@@ -593,6 +618,8 @@ void setupUBOs() {
                           matriciesUniformBuffer.blockBinding);
     glUniformBlockBinding(fluidUpdateProgram->getShaderProgramHandle(),
                           fluidUpdateProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding);
+    glUniformBlockBinding(sdfVisProgram->getShaderProgramHandle(),
+                          sdfVisProgram->getUniformBlockIndex("Matricies"), matriciesUniformBuffer.blockBinding);
 
     // Light Buffer
     glGenBuffers(1, &lightUniformBuffer.handle);
@@ -767,14 +794,12 @@ void setupSSBOs() {
     glBindBuffer(GL_ATOMIC_COUNTER_BUFFER, neighborSSBOs.counter);
     glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, fluidSSBOLocs.counter, neighborSSBOs.counter);
     glBufferData(GL_ATOMIC_COUNTER_BUFFER, sizeof(GLuint), NULL, GL_DYNAMIC_DRAW);
-
-
     //------------ END SSBOs --------
 }
 
 void setupVAOs() {
     // generate our vertex array object descriptors
-    glGenVertexArrays(3, vaods);
+    glGenVertexArrays(4, vaods);
     // will be used to store VBO descriptors for ARRAY_BUFFER and ELEMENT_ARRAY_BUFFER
     GLuint vbods[2];
 
@@ -851,6 +876,34 @@ void setupVAOs() {
     glVertexAttribPointer(grndShaderAttribLocs.normal, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 6,
                           (void *) (3 * sizeof(float)));
     //------------  END  GROUND VAO------------
+
+    //------------ BEGIN SDF PLANE VAO ------------
+    // Draw Ground
+    glBindVertexArray(vaods[SDF_PLANE]);
+
+    // generate our vertex buffer object descriptors for the SDF_PLANE
+    glGenBuffers(2, vbods);
+    // bind the VBO for our Ground Array Buffer
+    glBindBuffer(GL_ARRAY_BUFFER, vbods[0]);
+    // send the data to the GPU
+    glBufferData(GL_ARRAY_BUFFER, sizeof(sdfPlaneVertices), sdfPlaneVertices, GL_STATIC_DRAW);
+
+    // bind the VBO for our Ground Element Array Buffer
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, vbods[1]);
+    // send the data to the GPU
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(sdfPlaneIndices), sdfPlaneIndices, GL_STATIC_DRAW);
+
+    // enable our position attribute
+    glEnableVertexAttribArray(planeShaderAttribLocs.position);
+    // map the position attribute to data within our buffer
+    glVertexAttribPointer(planeShaderAttribLocs.position, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 5, (void *) 0);
+
+    // enable our normal attribute
+    glEnableVertexAttribArray(planeShaderAttribLocs.texCoord);
+    // map the normal attribute to data within our buffer
+    glVertexAttribPointer(planeShaderAttribLocs.texCoord, 2, GL_FLOAT, GL_FALSE, sizeof(float) * 5,
+                          (void *) (3 * sizeof(float)));
+    //------------  END SDF PLANE VAO------------
 
     //------------  BEGIN SPHERE VAO    ------------
     // SOURCE: http://www.songho.ca/opengl/gl_sphere.html
@@ -974,7 +1027,7 @@ void setupSDFs() {
     modelLoader->setIndexLocation(sdfSSBOLocs.index);
 
     // Calculate SDF
-    modelLoader->calculateSignedDistanceFieldCPU(0.5, 1.0, glm::mat4(1.0));
+    modelLoader->calculateSignedDistanceFieldCPU(0.1, 1.0, glm::mat4(1.0));
 }
 
 // load in our model data to VAOs and VBOs
@@ -1352,6 +1405,27 @@ void renderScene(GLFWwindow *window) {
     glBindVertexArray(vaods[GROUND]);
     // draw our ground!
     glDrawElements(GL_TRIANGLES, sizeof(groundIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
+
+    /***** SDF *****/
+    sdfVisProgram->useProgram();
+    // bind our plane VAO
+    glBindVertexArray(vaods[SDF_PLANE]);
+    // draw our ground!
+    glDrawElements(GL_TRIANGLES, sizeof(sdfPlaneIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
+
+    /**** OBJECT ****/
+    // Material settings
+    glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4,
+                    matReader.getSwatch(FLOOR_MATERIAL).diffuse);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4,
+                    matReader.getSwatch(FLOOR_MATERIAL).specular);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float),
+                    matReader.getSwatch(FLOOR_MATERIAL).shininess);
+    glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float) * 4,
+                    matReader.getSwatch(FLOOR_MATERIAL).ambient);
+    phongProgram->useProgram();
+    modelLoader->draw(grndShaderAttribLocs.position, grndShaderAttribLocs.normal);
 }
 
 static void updateParams() {

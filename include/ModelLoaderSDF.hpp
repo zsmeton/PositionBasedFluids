@@ -60,7 +60,7 @@ namespace CSCI444 {
         BoundingBox boundingBox;
         glm::mat4 transformMtx;
         uint xDim, yDim, zDim;
-        SDFCell *cells;
+        SDFCell cells[];
     };
 
     struct Triangle {
@@ -343,6 +343,7 @@ float CSCI444::ModelLoaderSDF::_dot2(const glm::vec3 &v) {
 }
 
 float CSCI444::ModelLoaderSDF::_distTriangle(const Triangle &triangle, const glm::vec3 &point) {
+    /*
     // prepare data
     glm::vec3 v21 = triangle.v2 - triangle.v1;
     glm::vec3 p1 = point - triangle.v1;
@@ -371,7 +372,141 @@ float CSCI444::ModelLoaderSDF::_distTriangle(const Triangle &triangle, const glm
                    :
                    // 1 face
                    glm::dot(nor, p1) * glm::dot(nor, p1) / _dot2(nor));
+    */
+    /**
+     * Source: Distance Between Point and Triangle in 3D, David Eberly, Geometric Tools, Redmond WA 98052
+     */
+    glm::vec3 B = triangle.v1;
+    glm::vec3 E0 = triangle.v2 - B;
+    glm::vec3 E1 = triangle.v3 - B;
+    float a = glm::dot(E0, E0);
+    float b = glm::dot(E0, E1);
+    float c = glm::dot(E1, E1);
+    float d = glm::dot(E0, B - point);
+    float e = glm::dot(E1, B - point);
+    float s = b * e - c * d;
+    float t = b * d - a * e;
+    float det = a * c - b * b;
+    if (s + t <= det) {
+        if (s < 0) {
+            if (t < 0) {
+                // Region 4
+                if (d < 0) {
+                    t = 0;
+                    if (-d >= a) {
+                        s = 1;
+                    } else {
+                        s = -d / a;
+                    }
+                } else {
+                    s = 0;
+                    if (e >= 0) {
+                        t = 0;
+                    } else if (-e >= c) {
+                        t = 1;
+                    } else {
+                        t = -e / c;
+                    }
+                }
+            } else {
+                // Region 3
+                s = 0;
+                if (e >= 0) {
+                    t = 0;
+                } else if (-e >= c) {
+                    t = 1;
+                } else {
+                    t = -e / c;
+                }
+            }
+        } else if (t < 0) {
+            // Region 5
+            t = 0;
+            if (d >= 0) {
+                s = 0;
+            } else if (-d >= a) {
+                s = 1;
+            } else {
+                s = -d / a;
+            }
+        } else {
+            // Region 0
+            s /= det;
+            t /= det;
+        }
+    } else {
+        if (s < 0) {
+            // Region 2
+            float tmp0 = b + d;
+            float tmp1 = c + e;
+            if (tmp1 > tmp0) {
+                float numer = tmp1 - tmp0;
+                float denom = a - 2 * b + c;
+                if (numer >= denom) {
+                    s = 1;
+                } else {
+                    s = numer / denom;
+                }
+                t = 1 - s;
+            } else {
+                s = 0;
+                if (tmp1 <= 0) {
+                    t = 1;
+                } else if (e >= 0) {
+                    t = 0;
+                } else {
+                    t = -e / c;
+                }
+            }
+        } else if (t < 0) {
+            // Region 6
+            float tmp0 = b + e;
+            float tmp1 = a + d;
+            if (tmp1 > tmp0) {
+                float numer = tmp1 - tmp0;
+                float denom = a - 2 * b + c;
+                if (numer >= denom) {
+                    t = 1;
+                } else {
+                    t = numer / denom;
+                }
+                s = 1 - t;
+            } else {
+                t = 0;
+                if (tmp1 <= 0) {
+                    s = 1;
+                } else if (e >= 0) {
+                    s = 0;
+                } else {
+                    s = -d / a;
+                }
+            }
+        } else {
+            // Region 1
+            float numer = (c + e) - (b + d);
+            if (numer <= 0) {
+                s = 0;
+            } else {
+                float denom = a - 2 * b + c;
+                if (numer >= denom) {
+                    s = 1;
+                } else {
+                    s = numer / denom;
+                }
+            }
+            t = 1 - s;
+        }
+    }
 
+    // Get vector on triangle closes to point
+    glm::vec3 closestPoint = B + s * E0 + t * E1;
+    // Get distance
+    glm::vec3 pt = point - closestPoint;
+    float dist = _dot2(pt);
+    // Get sign
+    float sign = glm::sign(glm::dot(triangle.normal, pt));
+    sign = (-0.1 <= sign <= 0.1) ? 1.0 : sign;
+    return sign * dist;
 }
 
 inline bool
@@ -394,23 +529,23 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceFieldCPU(float resolution, float
 
     // Calculate bounding box
     BoundingBox box;
-    box.frontLeftBottom = initialModelMtx * glm::vec4(minX, minY, minZ, 1.0);
-    box.backRightTop = initialModelMtx * glm::vec4(maxX, maxY, maxZ, 1.0);
+    box.frontLeftBottom = initialModelMtx * glm::vec4(minX - offset, minY - offset, minZ - offset, 1.0);
+    box.backRightTop = initialModelMtx * glm::vec4(maxX + offset, maxY + offset, maxZ + offset, 1.0);
 
     // Calculate dimensions of grid
     unsigned int dimX = static_cast<unsigned int>(round(
-            (box.backRightTop.x - box.frontLeftBottom.x + 2 * offset) / resolution));
+            (box.backRightTop.x - box.frontLeftBottom.x) / resolution));
     unsigned int dimY = static_cast<unsigned int>(round(
-            (box.backRightTop.y - box.frontLeftBottom.y + 2 * offset) / resolution));
+            (box.backRightTop.y - box.frontLeftBottom.y) / resolution));
     unsigned int dimZ = static_cast<unsigned int>(round(
-            (box.backRightTop.z - box.frontLeftBottom.z + 2 * offset) / resolution));
+            (box.backRightTop.z - box.frontLeftBottom.z) / resolution));
 
     // Calculate transformation mtx (world -> grid)
     glm::mat4 transformationMtx = glm::mat4(1.0);
 
     transformationMtx = glm::translate(transformationMtx,
-                                       glm::vec3(-box.frontLeftBottom.x + offset, -box.frontLeftBottom.y + offset,
-                                                 -box.frontLeftBottom.z + offset));
+                                       glm::vec3(-box.frontLeftBottom.x, -box.frontLeftBottom.y,
+                                                 -box.frontLeftBottom.z));
     transformationMtx =
             glm::scale(glm::mat4(1.0), glm::vec3(1 / resolution, 1 / resolution, 1 / resolution)) * transformationMtx;
 
@@ -443,28 +578,32 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceFieldCPU(float resolution, float
     }
 
     // Create grid
-    SDFCell grid[dimX][dimY][dimZ];
+    SDFCell grid[dimX * dimY * dimZ];
 
     // Calculate the signed distance field
     glm::mat4 inverseTransformMtx = glm::inverse(transformationMtx);
     uint progressCounter = 0;
     uint total = dimX * dimY * dimZ * worldTriangles.size();
-    printf("Total calcs to do: %d\n", total);
-    for (int xIndex = 0; xIndex < dimX; xIndex++) {
+
+    printf("SDF Dimensions: (%d, %d, %d)\n", dimX, dimY, dimZ);
+    printf("Total calcs to do: %u\n", total);
+
+    for (int zIndex = 0; zIndex < dimZ; zIndex++) {
         for (int yIndex = 0; yIndex < dimY; yIndex++) {
-            for (int zIndex = 0; zIndex < dimZ; zIndex++) {
+            for (int xIndex = 0; xIndex < dimX; xIndex++) {
                 // Calculate world position
                 glm::vec3 pos = glm::vec3(inverseTransformMtx * glm::vec4(xIndex, yIndex, zIndex, 1.0));
                 // Find nearest triangle
                 Triangle minTri;
                 float minDist = 99999999.0f;
+                float minSDist = 99999999.0f;
                 for (auto triangle : worldTriangles) {
-                    float dist = abs(_distTriangle(triangle, pos));
-                    if (dist < minDist) {
+                    float dist = _distTriangle(triangle, pos);
+                    if (abs(dist) < minDist) {
                         minTri = triangle;
-                        minDist = dist;
+                        minDist = abs(dist);
+                        minSDist = dist;
                     }
-
                     if (true) {
                         progressCounter++;
                         if (progressCounter % 5000 == 0) {
@@ -476,12 +615,12 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceFieldCPU(float resolution, float
                     }
                 }
                 // Set data (with sign)
-                if (_distTriangle(minTri, pos) < 0.0) {
-                    grid[xIndex][yIndex][zIndex].distance = -sqrt(minDist);
+                if (minSDist < 0.0) {
+                    grid[xIndex + dimY * (yIndex + dimZ * zIndex)].distance = -sqrt(minDist);
                 } else {
-                    grid[xIndex][yIndex][zIndex].distance = sqrt(minDist);
+                    grid[xIndex + dimY * (yIndex + dimZ * zIndex)].distance = sqrt(minDist);
                 }
-                grid[xIndex][yIndex][zIndex].normal = glm::vec4(minTri.normal, 1.0);
+                grid[xIndex + dimY * (yIndex + dimZ * zIndex)].normal = glm::vec4(minTri.normal, 1.0);
             }
         }
     }
@@ -497,17 +636,34 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceFieldCPU(float resolution, float
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, _sdfLoc, _sdfSSBO);
     uint sdfSize = sizeof(box) + sizeof(glm::mat4) + 3 * sizeof(GLuint) + dimX * dimY * dimZ * sizeof(SDFCell);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sdfSize, NULL, GL_DYNAMIC_DRAW);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 8 * sizeof(float), &box);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float), 16 * sizeof(float), &(transformationMtx)[0][0]);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float), sizeof(unsigned int), &dimX);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float) + sizeof(unsigned int),
+                    sizeof(unsigned int), &dimY);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float) + 2 * sizeof(unsigned int),
+                    sizeof(unsigned int), &dimZ);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float) + 3 * sizeof(unsigned int),
+                    sizeof(SDFCell) * dimX * dimY * dimZ, &(grid)[0]);
+
+    /*
     auto *sdfBuff = (SignedDistanceField *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sdfSize,
                                                              GL_MAP_WRITE_BIT);
     sdfBuff->boundingBox = box;
-    sdfBuff->cells = &grid[0][0][0];
     sdfBuff->transformMtx = transformationMtx;
     sdfBuff->xDim = dimX;
     sdfBuff->yDim = dimY;
     sdfBuff->zDim = dimZ;
+    for (int xIndex = 0; xIndex < dimX; xIndex++) {
+        for (int yIndex = 0; yIndex < dimY; yIndex++) {
+            for (int zIndex = 0; zIndex < dimZ; zIndex++) {
+                sdfBuff->cells[xIndex + yIndex + zIndex] = grid[xIndex][yIndex][zIndex];
+            }
+        }
+    }
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
-
-
+    */
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, -1);
     return true;
 }
 
