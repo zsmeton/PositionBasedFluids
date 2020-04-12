@@ -14,15 +14,15 @@ layout(std430, binding=1) buffer Positions {
     vec4 positions [];
 };
 
-layout(std430, binding=6) buffer Colors {
+layout(std430, binding=7) buffer Colors {
     vec4 colors [];
 };
 
-layout(std430, binding=7) buffer Hash {
+layout(std430, binding=8) buffer Hash {
     uint hashMap[];
 };
 
-layout(std430, binding=8) buffer LinkedList {
+layout(std430, binding=9) buffer LinkedList {
     NodeType nodes[];
 };
 

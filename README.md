@@ -5,10 +5,7 @@ Zachary Smeton
 todo
 
 ### TODOS
-- Implement basic position based fluid dynamics
-- Implement Tensile Instability, Vorticity confinement and xsph viscosity
-- Implement Hardware instancing of spheres to fluid particles
-- Implement signed distance field render pass
+- Implement signed distance field as compute shader
 - Implement way to use signed distance fields for each object
 - Integrate signed distance fields into fluid dynamic
 - Create various fluid scenarios (Some configuration files possibly...)
@@ -18,5 +15,4 @@ todo
     - some transparency
 
 #### NITTY GRITTY TODOS
-- Precompute Smoothing Kernel Scaling Factors
 - Create struct to store block binding locations

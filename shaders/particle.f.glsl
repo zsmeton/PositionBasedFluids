@@ -50,8 +50,8 @@ void main() {
 
     // Calculate material colors
     vec4 matDiffuse = vec4(color, 1.0);
-    vec4 matAmbient = 0.1 * vec4(color, 1.0);
-    vec4 matSpecular = 0.1 * vec4(1.0);
+    vec4 matAmbient = vec4(0.1 * vec3(color), 1.0);
+    vec4 matSpecular = vec4(0.1*vec3(1.0), 1.0);
     float shininess = 0.1;
 
     // Calculate diffuse component

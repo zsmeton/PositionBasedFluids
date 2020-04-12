@@ -2,14 +2,12 @@
 
 #define M_PI 3.1415926535897932384626433832795
 
-// ***** VERTEX SHADER INPUT *****
-layout(location=0) in uint vIndex;
-layout(location=1) in vec4 vPos;
-layout(location=2) in vec4 vVel;
+// ***** COMPUTE SHADER INPUT *****
+layout(local_size_x = 1000, local_size_y = 1, local_size_z = 1) in;
 
-// ***** VERTEX SHADER OUTPUT *****
+// ***** COMPUTE SHADER OUTPUT *****
 
-// ***** VERTEX SHADER UNIFORMS *****
+// ***** COMPUTE SHADER UNIFORMS *****
 layout(binding=0, offset=0) uniform atomic_uint nextNodeCounter;
 
 layout(shared, binding = 0) uniform Matricies{
@@ -40,7 +38,7 @@ layout(shared, binding = 4) uniform FluidDynamics {
     float time;
 } fluid;
 
-// ***** VERTEX SHADER STRUCTS *****
+// ***** COMPUTE SHADER STRUCTS *****
 struct HashType {
     uint headNodeIndex;
 };
@@ -55,7 +53,7 @@ struct NeighborType {
     uint neighboring[500];
 };
 
-// ***** VERTEX SHADER BUFFERS *****
+// ***** COMPUTE SHADER BUFFERS *****
 /*
     index = 0;
     position = 1;
@@ -68,6 +66,10 @@ struct NeighborType {
     neighbors = 9;
     counter = 0;
 */
+layout(std430, binding=0) buffer IndexBuf {
+    vec4 indices[];
+};
+
 layout(std430, binding=1) buffer PosBuf {
     vec4 positions[];
 };
@@ -104,8 +106,8 @@ layout(std430, binding=10) buffer NeighborDataBuf {
     NeighborType neighbors[];
 };
 
-// ***** VERTEX SHADER SUBROUTINES *****
-// ***** VERTEX SHADER HELPER FUNCTIONS *****
+// ***** COMPUTE SHADER SUBROUTINES *****
+// ***** COMPUTE SHADER HELPER FUNCTIONS *****
 const int P1 = 73856093;
 const int P2 = 19349663;
 const int P3 = 83492791;
@@ -126,7 +128,7 @@ uint neighborFindCell(uint neighborCount, int hashIdx){
     HashType start = hashMap[hashIdx];
 
     // Skip parts of hashmap with old data
-    if(start.headNodeIndex == 0xffffffff){
+    if (start.headNodeIndex == 0xffffffff){
         return neighborCount;
     }
 
@@ -134,7 +136,7 @@ uint neighborFindCell(uint neighborCount, int hashIdx){
     // Iterate over linked list
     int errorCounter = 0;
     NodeType n = nodes[start.headNodeIndex];
-    while( errorCounter < fluid.maxParticles && neighborCount < fluid.maxNeighbors ){
+    while (errorCounter < fluid.maxParticles && neighborCount < fluid.maxNeighbors){
         // Skip ourselves
         if (n.particleIndex != vIndex){
             // If distance is < support radius increment neighbor count
@@ -144,9 +146,9 @@ uint neighborFindCell(uint neighborCount, int hashIdx){
             }
         }
         // Exit on null
-        if(n.nextNodeIndex == 0xffffffff){
+        if (n.nextNodeIndex == 0xffffffff){
             return neighborCount;
-        }else{
+        } else {
             // Or go to next node
             n = nodes[n.nextNodeIndex];
         }
@@ -169,23 +171,23 @@ int[27] getNeighborCellHashes(){
 
     int neighborHash[27];
     // initialize to -1
-    for(int i = 0; i < 27; i++){
+    for (int i = 0; i < 27; i++){
         neighborHash[i] = -1;
     }
 
     // Hash to neighbors, check if unique
     int index = 0;
-    for(int i = -1; i < 2; i++){
-        for(int j = -1; j < 2; j++){
-            for(int k = -1; k < 2; k++){
+    for (int i = -1; i < 2; i++){
+        for (int j = -1; j < 2; j++){
+            for (int k = -1; k < 2; k++){
                 // Hash
-                int hash = getNeighborCellHash(pos,i,j,k);
+                int hash = getNeighborCellHash(pos, i, j, k);
                 // Uniqueness check
                 bool new = true;
-                for(int l = 0; l < 27 && neighborHash[l] != -1; l++){
+                for (int l = 0; l < 27 && neighborHash[l] != -1; l++){
                     new = new && (hash != neighborHash[l]);
                 }
-                if(new){
+                if (new){
                     neighborHash[index] = hash;
                     index ++;
                 }
@@ -204,7 +206,7 @@ uint findNeighbors(){
     // Get neighbor hashes
     int hashes[27] = getNeighborCellHashes();
 
-    for(int i = 0; i < 27 && hashes[i] > -1; i++){
+    for (int i = 0; i < 27 && hashes[i] > -1; i++){
         numNeighbors = neighborFindCell(numNeighbors, hashes[i]);
     }
     return numNeighbors;
@@ -246,8 +248,8 @@ float densityEstimation(NeighborType neighborData){
     vec3 pos = vec3(newPositions[vIndex]);
 
     float density = 0.0;
-    for(int i = 0; i < neighborData.count; i++){
-        density += WPoly( pos - vec3(newPositions[neighborData.neighboring[i]]) );
+    for (int i = 0; i < neighborData.count; i++){
+        density += WPoly(pos - vec3(newPositions[neighborData.neighboring[i]]));
     }
 
     return density;
@@ -355,9 +357,9 @@ vec3 vorticityConfinement(){
 vec3 xsph(){
     vec3 pos = vec3(newPositions[vIndex]);
     vec3 vel = vec3(velocities[vIndex]);
+    vec3 velNeighbor = vec3(0.0);
     NeighborType neighborData = neighbors[vIndex];
 
-    vec3 velNeighbor = vec3(0.0);
     for (uint i = 0; i < neighborData.count; i++){
         velNeighbor += (vec3(velocities[neighborData.neighboring[i]]) - vel) * WPoly(pos-vec3(newPositions[neighborData.neighboring[i]]));
     }
@@ -396,11 +398,10 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
 
 void main() {
     // Apply Forces, Predict Positions
-    vec3 _vel = vec3(vVel) + fluid.dt *  vec3(0.0, -9.8, 0.0);
-    vec3 _pos = vec3(vPos) + fluid.dt * _vel;// Set additional variable for memory access optimization
+    vec3 updatedVelocity = vec3(vVel) + fluid.dt *  vec3(0.0, -9.8, 0.0);
+    vec3 _pos = vec3(vPos) + fluid.dt * updatedVelocity;// Set additional variable for memory access optimization
     _pos += confineToBox(_pos, vec3(0.0));
     newPositions[vIndex].xyz = _pos;
-    velocities[vIndex].xyz = _vel;
 
     // Spacial Hash
     // Calculate hash
@@ -426,7 +427,7 @@ void main() {
     neighbors[vIndex].count = findNeighbors();
 
     // Constraint solve
-    for(uint i = 0; i < fluid.solverIters; i ++){
+    for (uint i = 0; i < fluid.solverIters; i ++){
         // Calculate lambda
         lambdas[vIndex] = lambda();
         memoryBarrier();
@@ -450,7 +451,7 @@ void main() {
     memoryBarrier();
 
     // Apply Vorticity Confinement and XSPH Viscosity
-    velocities[vIndex].xyz += vorticityConfinement() * fluid.dt;
+    velocities[vIndex].xyz += vorticityConfinement();
     memoryBarrier();
     vec3 newVel = xsph();
     memoryBarrier();
