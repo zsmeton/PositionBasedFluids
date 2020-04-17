@@ -141,5 +141,5 @@ void main() {
     newVelocities[vIndex].xyz = newVel;
 
     // Set color to vel
-    colors[vIndex].rgb = 0.5*(normalize(newVel) + vec3(1.0));
+    colors[vIndex].rgb = 0.5*(normalize(newVel) + vec3(1.0));//vec3(0.0, 0.32, 0.62);// + 0.1*(normalize(newVel) + vec3(1.0));
 }

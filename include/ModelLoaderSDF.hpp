@@ -57,7 +57,6 @@ namespace CSCI444 {
     };
 
     struct SignedDistanceField {
-        BoundingBox boundingBox;
         glm::mat4 transformMtx;
         uint xDim, yDim, zDim;
         SDFCell cells[];
@@ -122,7 +121,7 @@ namespace CSCI444 {
         bool calculateSignedDistanceField(ShaderProgram *computeShader, float resolution, float offset,
                                           glm::mat4 initialModelMtx);
 
-        bool translateModelMtx(glm::vec3 translation);
+        void translateModelMtx(glm::vec3 translation);
 
         /**
          * Sets the signed distance field's location
@@ -180,6 +179,10 @@ namespace CSCI444 {
 
         GLint _sdfLoc;
         GLint _triangleLoc;
+
+        float _resolution;
+        float _offset;
+        glm::mat4 _modelMtx;
 
         double minX = 999999, maxX = -999999, minY = 999999, maxY = -999999, minZ = 999999, maxZ = -999999;
 
@@ -595,18 +598,16 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceFieldCPU(float resolution, float
     // Send info to the GPU
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, _sdfSSBO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, _sdfLoc, _sdfSSBO);
-    uint sdfSize = sizeof(box) + sizeof(glm::mat4) + 3 * sizeof(GLuint) + dimX * dimY * dimZ * sizeof(SDFCell);
+    uint sdfSize = sizeof(glm::mat4) + 3 * sizeof(GLuint) + dimX * dimY * dimZ * sizeof(SDFCell);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sdfSize, NULL, GL_DYNAMIC_DRAW);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 8 * sizeof(float), &box);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float), 16 * sizeof(float), &(transformationMtx)[0][0]);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float), sizeof(unsigned int), &dimX);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float) + sizeof(unsigned int),
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, 16 * sizeof(float), &(transformationMtx)[0][0]);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 16 * sizeof(float), sizeof(unsigned int), &dimX);
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 16 * sizeof(float) + sizeof(unsigned int),
                     sizeof(unsigned int), &dimY);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float) + 2 * sizeof(unsigned int),
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 16 * sizeof(float) + 2 * sizeof(unsigned int),
                     sizeof(unsigned int), &dimZ);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 8 * sizeof(float) + 16 * sizeof(float) + 3 * sizeof(unsigned int),
+    glBufferSubData(GL_SHADER_STORAGE_BUFFER, 16 * sizeof(float) + 3 * sizeof(unsigned int),
                     sizeof(SDFCell) * dimX * dimY * dimZ, &(grid)[0]);
-
 
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, -1);
     return true;
@@ -640,14 +641,17 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceField(ShaderProgram *computeShad
         return false;
     }
 
+    _resolution = resolution;
+    _offset = offset;
+    _modelMtx = initialModelMtx;
+
     // Calculate bounding box
     BoundingBox box;
     box.frontLeftBottom = initialModelMtx * glm::vec4(minX - offset, minY - offset, minZ - offset, 1.0);
     box.backRightTop = initialModelMtx * glm::vec4(maxX + offset, maxY + offset, maxZ + offset, 1.0);
 
     // Calculate dimensions of grid
-    unsigned int dimX = static_cast<unsigned int>(round(
-            (box.backRightTop.x - box.frontLeftBottom.x) / resolution));
+    unsigned int dimX = static_cast<unsigned int>(round((box.backRightTop.x - box.frontLeftBottom.x) / resolution));
     unsigned int dimY = static_cast<unsigned int>(round(
             (box.backRightTop.y - box.frontLeftBottom.y) / resolution));
     unsigned int dimZ = static_cast<unsigned int>(round(
@@ -714,13 +718,9 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceField(ShaderProgram *computeShad
     // Setup sdf buffer
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, _sdfSSBO);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, _sdfLoc, _sdfSSBO);
-    uint sdfSize = sizeof(box) + sizeof(glm::mat4) + 3 * sizeof(GLuint) + dimX * dimY * dimZ * sizeof(SDFCell);
+    uint sdfSize = sizeof(glm::mat4) + 3 * sizeof(GLuint) + dimX * dimY * dimZ * sizeof(SDFCell);
     glBufferData(GL_SHADER_STORAGE_BUFFER, sdfSize, NULL, GL_DYNAMIC_DRAW);
-    auto sdfTemp = (SignedDistanceField *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0,
-                                                            8 * sizeof(float) + 16 * sizeof(float) +
-                                                            3 * sizeof(unsigned int), bufMask);
-    sdfTemp->boundingBox.frontLeftBottom = box.frontLeftBottom;
-    sdfTemp->boundingBox.backRightTop = box.backRightTop;
+    auto sdfTemp = (SignedDistanceField *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sdfSize, bufMask);
     sdfTemp->transformMtx = transformationMtx;
     sdfTemp->xDim = dimX;
     sdfTemp->yDim = dimY;
@@ -733,6 +733,45 @@ CSCI444::ModelLoaderSDF::calculateSignedDistanceField(ShaderProgram *computeShad
     glDeleteBuffers(1, &_triangleSSBO);
 
     return true;
+}
+
+inline void
+CSCI444::ModelLoaderSDF::translateModelMtx(glm::vec3 translation) {
+    _modelMtx = glm::translate(_modelMtx, translation);
+
+    // Calculate bounding box
+    BoundingBox box;
+    box.frontLeftBottom = _modelMtx * glm::vec4(minX - _offset, minY - _offset, minZ - _offset, 1.0);
+    box.backRightTop = _modelMtx * glm::vec4(maxX + _offset, maxY + _offset, maxZ + _offset, 1.0);
+
+    // Calculate dimensions of grid
+    unsigned int dimX = static_cast<unsigned int>(round((box.backRightTop.x - box.frontLeftBottom.x) / _resolution));
+    unsigned int dimY = static_cast<unsigned int>(round(
+            (box.backRightTop.y - box.frontLeftBottom.y) / _resolution));
+    unsigned int dimZ = static_cast<unsigned int>(round(
+            (box.backRightTop.z - box.frontLeftBottom.z) / _resolution));
+
+    // Calculate transformation mtx (world -> grid)
+    glm::mat4 transformationMtx = glm::mat4(1.0);
+
+    transformationMtx = glm::translate(transformationMtx,
+                                       glm::vec3(-box.frontLeftBottom.x, -box.frontLeftBottom.y,
+                                                 -box.frontLeftBottom.z));
+    transformationMtx = glm::scale(glm::mat4(1.0), glm::vec3(1 / _resolution, 1 / _resolution, 1 / _resolution)) *
+                        transformationMtx;
+
+    // Setup sdf buffer
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, _sdfSSBO);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, _sdfLoc, _sdfSSBO);
+    uint sdfSize = sizeof(glm::mat4) + 3 * sizeof(GLuint) + dimX * dimY * dimZ * sizeof(SDFCell);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, sdfSize, NULL, GL_DYNAMIC_DRAW);
+    GLint bufMask = GL_MAP_WRITE_BIT;
+    auto sdfTemp = (SignedDistanceField *) glMapBufferRange(GL_SHADER_STORAGE_BUFFER, 0, sdfSize, bufMask);
+    sdfTemp->transformMtx = transformationMtx;
+    sdfTemp->xDim = dimX;
+    sdfTemp->yDim = dimY;
+    sdfTemp->zDim = dimZ;
+    glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
 // Read in a WaveFront *.obj File

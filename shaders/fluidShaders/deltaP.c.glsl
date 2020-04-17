@@ -89,7 +89,6 @@ layout(std430, binding=10) buffer NeighborDataBuf {
 };
 
 layout(std430, binding=11) buffer SignedDistanceField {
-    BoundingBox boundingBox;
     mat4 transformMtx;
     uint xDim, yDim, zDim;
     SDFCell cells [];
@@ -153,7 +152,7 @@ vec3 collideSDF(vec3 pos, vec3 deltaPos){
     // Transform the position
     vec3 tranPos = vec3(transformMtx*vec4(newPos, 1.0));
     // Turn transformed position into indices
-    tranPos = vec3(floor(tranPos.x), floor(tranPos.y), floor(tranPos.z));
+    tranPos = vec3(round(tranPos.x), round(tranPos.y), round(tranPos.z));
     // Check if in the bounding box
     if (tranPos.x < 0 || tranPos.x >= xDim){
         return deltaPos;
@@ -178,6 +177,11 @@ vec3 collideSDF(vec3 pos, vec3 deltaPos){
     return deltaPos;
 }
 
+float strangeFunction(float x){
+    float denom = 1 + pow(10, -5.0*sin(1.5*x));
+    return 2.0*(1/denom - 0.5);
+}
+
 vec3 confineToBox(vec3 pos, vec3 deltaPos){
     vec3 newPos = pos + deltaPos;
 
@@ -195,7 +199,13 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
         deltaPos.x = 5.0 - newPos.x - fluid.collisionEpsilon;
     }
     // Check front wall
-    float wallZ = -5.0 + 2.0*sin(5.0*fluid.time);
+    float wallOffset = strangeFunction(fluid.time);
+    if (wallOffset < 0.0){
+        wallOffset *= 2.0;
+    } else {
+        wallOffset *= 0.5;
+    }
+    float wallZ = -5.0 + wallOffset;
     if (newPos.z < wallZ){
         deltaPos.z = wallZ - newPos.z + fluid.collisionEpsilon;
     } else if (newPos.z > 5.0){
@@ -213,7 +223,7 @@ void main() {
 
     // Collision detection and response
     dp = confineToBox(newPositions[vIndex].xyz, dp);
-    dp = collideSDF(newPositions[vIndex].xyz, dp);
+    //dp = collideSDF(newPositions[vIndex].xyz, dp);
 
     // Set delta p
     deltaPs[vIndex].xyz = dp;

@@ -39,7 +39,6 @@ layout(shared, binding = 4) uniform FluidDynamics {
 } fluid;
 
 layout(std430, binding=11) buffer SignedDistanceField {
-    BoundingBox boundingBox;
     mat4 transformMtx;
     uint xDim, yDim, zDim;
     SDFCell cells [];
@@ -57,7 +56,7 @@ float distanceLookup(vec3 position, float def){
     // Transform the position
     vec3 tranPos = vec3(transformMtx*vec4(position, 1.0));
     // Turn transformed position into indices
-    tranPos = vec3(floor(tranPos.x), floor(tranPos.y), floor(tranPos.z));
+    tranPos = vec3(round(tranPos.x), round(tranPos.y), round(tranPos.z));
     // Check if in the bounding box
     if (tranPos.x < 0 || tranPos.x >= xDim){
         return def;
@@ -80,7 +79,7 @@ float distanceLookup(vec3 position, float def){
 
 void main() {
     // get max distance
-    float maxDist = distance(boundingBox.frontLeftBottom, boundingBox.backRightTop);
+    float maxDist = 999.99;
 
     // Get sdf distance
     float sDist = distanceLookup(pos, maxDist);
@@ -89,11 +88,13 @@ void main() {
     float nSDist = sDist;
 
     // Set color to signed distance
-    if (nSDist == 1.0 || nSDist == maxDist){
-        fragColorOut = vec4(0.0, 0.0, 0.0, 0.0);
-    } else if (nSDist < 0.0){
-        fragColorOut = vec4(1.0, 0.0, 0.0, 1.0);
+    if (nSDist == maxDist){
+        discard;
+    } else if (nSDist < 0.000001){
+        fragColorOut = vec4(-nSDist, 0.0, 0.0, 1.0);
+    } else if (nSDist > 0.000001){
+        fragColorOut = vec4(0.0, 0.0, nSDist, 1.0);
     } else {
-        fragColorOut = vec4(0.0, 0.0, 1.0, 1.0);
+        fragColorOut = vec4(0.0, 1.0, 0.0, 1.0);
     }
 }

@@ -21,7 +21,6 @@ struct BoundingBox {
 
 // ***** COMPUTE SHADER BUFFERS *****
 layout(std430, binding=11) buffer SignedDistanceField {
-    BoundingBox boundingBox;
     mat4 transformMtx;
     uint xDim;
     uint yDim;
@@ -178,36 +177,39 @@ void main() {
     uint xIndex = gl_GlobalInvocationID.x;
     uint yIndex = gl_GlobalInvocationID.y;
     uint zIndex = gl_GlobalInvocationID.z;
+    uint cellIndex = xIndex + yDim * (yIndex + zDim * zIndex);
 
     // Initialize to 0
-    cells[xIndex + yDim * (yIndex + zDim * zIndex)].distance = 0.0;
-    cells[xIndex + yDim * (yIndex + zDim * zIndex)].normal = vec4(0.0);
+    cells[cellIndex].distance = 0.0;
+    cells[cellIndex].normal = vec4(0.0);
 
     // Calculate inverse of the transformation mtx
     mat4 inverseTransformMtx = inverse(transformMtx);
 
     // Calculate world position
     vec3 pos = vec3(inverseTransformMtx * vec4(xIndex, yIndex, zIndex, 1.0));
+
     // Find nearest triangle
     Triangle minTri;
     minTri.normal = vec4(0.0);
     float minDist = 99999.9f;
     float minSDist = 99999.0f;
     for (int i = 0; i < 4096; i++) {
-        for (int j = 0; j < 4096 && i + 4096*j < 15876; j++){
-            float dist = distTriangle(triangles[i+4096*j], pos);
+        for (int j = 0; j < 4096 && 4096*i + j < 15876; j++){
+            float dist = distTriangle(triangles[4096*i + j], pos);
             if (abs(dist) < minDist) {
-                minTri = triangles[i];
+                minTri = triangles[4096*i + j];
                 minDist = abs(dist);
                 minSDist = dist;
             }
         }
     }
+
     // Set data (with sign)
     if (minSDist < 0.0) {
-        cells[xIndex + yDim * (yIndex + zDim * zIndex)].distance = -sqrt(minDist);
+        cells[cellIndex].distance = -sqrt(minDist);
     } else {
-        cells[xIndex + yDim * (yIndex + zDim * zIndex)].distance = sqrt(minDist);
+        cells[cellIndex].distance = sqrt(minDist);
     }
-    cells[xIndex + yDim * (yIndex + zDim * zIndex)].normal = minTri.normal;
+    cells[cellIndex].normal = minTri.normal;
 }

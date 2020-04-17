@@ -39,7 +39,8 @@
 #include "include/ModelLoaderSDF.hpp"
 
 #define DEBUG 0
-#define SDF 1
+#define SDF 0
+#define SDF_DEBUG 0
 #define WATER 1
 
 //*************************************************************************************
@@ -566,9 +567,9 @@ void setupPipelines() {
 void setupParticleData() {
     // randomly initialize particle data
     for (GLuint i = 0; i < NUM_PARTICLES; i++) {
-        particleData.position[i].x = ((rand() % 1000) / 100.0) - 5;
-        particleData.position[i].y = ((rand() % 1000) / 100.0) - 2.0;
-        particleData.position[i].z = ((rand() % 1000) / 100.0) - 5;
+        particleData.position[i].x = ((rand() % 10000) / 1250.0) - 4.0;
+        particleData.position[i].y = ((rand() % 10000) / 1250.0) - 0.0;
+        particleData.position[i].z = ((rand() % 10000) / 1250.0) - 4.0;
         particleData.velocity[i].x = 0.0;
         particleData.velocity[i].y = 0.0;
         particleData.velocity[i].z = 0.0;
@@ -1459,9 +1460,10 @@ void fluidUpdate() {
                                                    GL_MAP_READ_BIT);
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 
-
+    /*
     printf("Hash: %f sec \tNeighbor: %f sec \tConstraint: %f sec\tVelocity: %f sec\n", spacial_time - start_time,
            neighbor_time - spacial_time, constraint_time - neighbor_time, vel_time - constraint_time);
+    */
 #endif
 }
 
@@ -1541,7 +1543,8 @@ void renderScene(GLFWwindow *window) {
     glDrawElements(GL_TRIANGLES, sizeof(groundIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
 
 #if SDF
-    /***** SDF *****//*
+    /***** SDF *****/
+#if SDF_DEBUG
     // Show the sdf using a sliding plane
     sdfVisProgram->useProgram();
     // bind our plane VAO
@@ -1557,7 +1560,7 @@ void renderScene(GLFWwindow *window) {
     glBufferData(GL_ARRAY_BUFFER, sizeof(sdfPlaneVerticesT), sdfPlaneVerticesT, GL_DYNAMIC_DRAW);
     // draw our ground!
     glDrawElements(GL_TRIANGLES, sizeof(sdfPlaneIndices) / sizeof(unsigned short), GL_UNSIGNED_SHORT, (void *) 0);
-    */
+#endif
     /**** OBJECT ****/
     // Material settings
     glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
@@ -1565,17 +1568,17 @@ void renderScene(GLFWwindow *window) {
     diffuse.r = matReader.getSwatch(FLOOR_MATERIAL).diffuse[0];
     diffuse.g = matReader.getSwatch(FLOOR_MATERIAL).diffuse[1];
     diffuse.b = matReader.getSwatch(FLOOR_MATERIAL).diffuse[2];
-    diffuse.a = 1.0;
+    diffuse.a = 0.3;
     glm::vec4 ambient;
     ambient.r = matReader.getSwatch(FLOOR_MATERIAL).ambient[0];
     ambient.g = matReader.getSwatch(FLOOR_MATERIAL).ambient[1];
     ambient.b = matReader.getSwatch(FLOOR_MATERIAL).ambient[2];
-    ambient.a = 1.0;
+    ambient.a = 0.3;
     glm::vec4 specular;
     specular.r = matReader.getSwatch(FLOOR_MATERIAL).specular[0];
     specular.g = matReader.getSwatch(FLOOR_MATERIAL).specular[1];
     specular.b = matReader.getSwatch(FLOOR_MATERIAL).specular[2];
-    specular.a = 1.0;
+    specular.a = 0.3;
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4, &(diffuse)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4, &(specular)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float),
@@ -1760,6 +1763,11 @@ int main(int argc, char *argv[]) {
         sprintf(fpsStr, "%.3f frames/sec (Avg: %.3f)", fps, fpsAvg);
         render_text(fpsStr, face, -1 + 8 * sx, 1 - 30 * sy, sx, sy);
 
+        char timeStr[80];
+        sprintf(timeStr, "Simulation Time: %.3f", simTime);
+        render_text(timeStr, face, -1 + 8 * sx, 1 - 50 * sy, sx, sy);
+
+        /*
         char restStr[100];
         int den = restDensity;
         sprintf(restStr, "(-e/r+) Rest Density: %d", den);
@@ -1785,6 +1793,7 @@ int main(int argc, char *argv[]) {
         char xsphStr[100];
         sprintf(xsphStr, "(-4/5+) XSPH: %f", kXsph);
         render_text(xsphStr, face, -1 + 8 * sx, 1 - 150 * sy, sx, sy);
+        */
 
 
         // swap the front and back buffers

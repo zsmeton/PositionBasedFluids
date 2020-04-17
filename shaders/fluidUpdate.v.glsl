@@ -365,6 +365,11 @@ vec3 xsph(){
     return vel + fluid.kxsph * velNeighbor;
 }
 
+float strangeFunction(float x){
+    float denom = 1 + pow(10, -5.0*sin(1.5*x));
+    return 2.0*(1/denom - 0.5);
+}
+
 vec3 confineToBox(vec3 pos, vec3 deltaPos){
     vec3 newPos = pos + deltaPos;
 
@@ -384,7 +389,13 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
         deltaPos.x = 5.0 - newPos.x - fluid.collisionEpsilon;
     }
     // Check front wall
-    float wallZ = -5.0 + 2.0*sin(5.0*fluid.time);
+    float wallOffset = strangeFunction(fluid.time);
+    if (wallOffset < 0.0){
+        wallOffset *= 2.0;
+    } else {
+        wallOffset *= 0.5;
+    }
+    float wallZ = -5.0 + wallOffset;
     if (newPos.z < wallZ){
         deltaPos.z = wallZ - newPos.z + fluid.collisionEpsilon;
     } else if (newPos.z > 5.0){
