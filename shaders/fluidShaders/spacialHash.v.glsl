@@ -149,30 +149,31 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
     vec3 newPos = pos + deltaPos;
 
     // Check floor
-    if (newPos.y < -5.0){
-        deltaPos.y = -5.0 - newPos.y + fluid.collisionEpsilon;
+    float wallY = -1.0;
+    if (fluid.time > 5.0){
+        wallY = -5.0;
+    }
+    if (newPos.y < wallY){
+        deltaPos.y = wallY - newPos.y + fluid.collisionEpsilon;
     } else if (newPos.y > 20.0){
         deltaPos.y = 20.0 - newPos.y - fluid.collisionEpsilon;
     }
     // Check left wall
-    if (newPos.x < -5.0){
-        deltaPos.x = -5.0 - newPos.x + fluid.collisionEpsilon;
-    } else if (newPos.x > 5.0){
+    float wallW = 2.5;
+    if (fluid.time > 5.2){
+        wallW = 4.0;
+    }
+    if (newPos.x < -wallW){
+        deltaPos.x = -wallW - newPos.x + fluid.collisionEpsilon;
+    } else if (newPos.x > wallW){
         // Check right wall
-        deltaPos.x = 5.0 - newPos.x - fluid.collisionEpsilon;
+        deltaPos.x = wallW - newPos.x - fluid.collisionEpsilon;
     }
     // Check front wall
-    float wallOffset = strangeFunction(fluid.time);
-    if (wallOffset < 0.0){
-        wallOffset *= 2.0;
-    } else {
-        wallOffset *= 0.5;
-    }
-    float wallZ = -5.0 + wallOffset;
-    if (newPos.z < wallZ){
-        deltaPos.z = wallZ - newPos.z + fluid.collisionEpsilon;
-    } else if (newPos.z > 5.0){
-        deltaPos.z = 5.0 - newPos.z - fluid.collisionEpsilon;
+    if (newPos.z < -wallW){
+        deltaPos.z = -wallW - newPos.z + fluid.collisionEpsilon;
+    } else if (newPos.z > wallW){
+        deltaPos.z = wallW - newPos.z - fluid.collisionEpsilon;
     }
 
     return deltaPos;

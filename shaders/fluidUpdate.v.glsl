@@ -373,11 +373,13 @@ float strangeFunction(float x){
 vec3 confineToBox(vec3 pos, vec3 deltaPos){
     vec3 newPos = pos + deltaPos;
 
-    colors[vIndex].r = 0.0;
-
     // Check floor
-    if (newPos.y < -5.0){
-        deltaPos.y = -5.0 - newPos.y + fluid.collisionEpsilon;
+    float wallY = 0.0;
+    if (fluid.time > 5.0){
+        wallY = -5.0;
+    }
+    if (newPos.y < wallY){
+        deltaPos.y = wallY - newPos.y + fluid.collisionEpsilon;
     } else if (newPos.y > 20.0){
         deltaPos.y = 20.0 - newPos.y - fluid.collisionEpsilon;
     }
@@ -389,13 +391,7 @@ vec3 confineToBox(vec3 pos, vec3 deltaPos){
         deltaPos.x = 5.0 - newPos.x - fluid.collisionEpsilon;
     }
     // Check front wall
-    float wallOffset = strangeFunction(fluid.time);
-    if (wallOffset < 0.0){
-        wallOffset *= 2.0;
-    } else {
-        wallOffset *= 0.5;
-    }
-    float wallZ = -5.0 + wallOffset;
+    float wallZ = -5.0;
     if (newPos.z < wallZ){
         deltaPos.z = wallZ - newPos.z + fluid.collisionEpsilon;
     } else if (newPos.z > 5.0){
