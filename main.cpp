@@ -157,7 +157,9 @@ const int SPHERE_STACKS = 10;
 std::vector<int> indices;
 
 // Objects
-const string OBJECT = "models/peashooter.obj";
+const string OBJECT = "models/sphere.obj";
+const float SDF_RESOLUTION = 0.1;
+const float SDF_OFFSET = 1.0;
 
 
 /// OTHER PARAMS ///
@@ -1114,7 +1116,7 @@ void setupSDFs() {
     // Calculate SDF
     //modelLoader->calculateSignedDistanceFieldCPU(0.5, 1.0, glm::mat4(1.0));
     modelLoaderMtx = glm::translate(glm::mat4(1.0), glm::vec3(0.0, -3.1, 0.0));
-    modelLoader->calculateSignedDistanceField(sdfProgram, 0.1, 0.1, modelLoaderMtx);
+    modelLoader->calculateSignedDistanceField(sdfProgram, SDF_RESOLUTION, SDF_OFFSET, modelLoaderMtx);
 }
 
 // load in our model data to VAOs and VBOs

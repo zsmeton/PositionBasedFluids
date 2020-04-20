@@ -77,6 +77,31 @@ float distanceLookup(vec3 position, float def){
     return cells[index].distance;
 }
 
+vec3 normalLookup(vec3 position, vec3 def){
+    // Transform the position
+    vec3 tranPos = vec3(transformMtx*vec4(position, 1.0));
+    // Turn transformed position into indices
+    tranPos = vec3(round(tranPos.x), round(tranPos.y), round(tranPos.z));
+    // Check if in the bounding box
+    if (tranPos.x < 0 || tranPos.x >= xDim){
+        return def;
+    }
+    if (tranPos.y < 0 || tranPos.y >= yDim){
+        return def;
+    }
+    if (tranPos.z < 0 || tranPos.z >= zDim){
+        return def;
+    }
+
+    // Get index from dimension indices
+    int index = int(tranPos.x + yDim * (tranPos.y + zDim * tranPos.z));
+    if (index < 0 || index > xDim * yDim * zDim){
+        return def;
+    }
+    // Get distance from sdf cells
+    return vec3(cells[index].normal);
+}
+
 void main() {
     // get max distance
     float maxDist = 999.99;
@@ -88,13 +113,17 @@ void main() {
     float nSDist = sDist;
 
     // Set color to signed distance
-    if (nSDist == maxDist){
+    if (abs(nSDist - maxDist) < 0.01){
         discard;
-    } else if (nSDist < 0.000001){
-        fragColorOut = vec4(-nSDist, 0.0, 0.0, 1.0);
-    } else if (nSDist > 0.000001){
-        fragColorOut = vec4(0.0, 0.0, nSDist, 1.0);
     } else {
-        fragColorOut = vec4(0.0, 1.0, 0.0, 1.0);
+
+        // get max distance
+        vec3 maxNorm = vec3(999.99);
+
+        // Get sdf distance
+        vec3 norm = normalLookup(pos, maxNorm);
+
+        // Set color to signed distance
+            fragColorOut = vec4(0.5*(normalize(norm) + vec3(1.0)), 1.0);
     }
 }

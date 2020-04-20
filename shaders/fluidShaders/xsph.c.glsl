@@ -141,5 +141,12 @@ void main() {
     newVelocities[vIndex].xyz = newVel;
 
     // Set color to vel
-    colors[vIndex].rgb = 0.5*(normalize(newVel) + vec3(1.0));//vec3(0.0, 0.32, 0.62);// + 0.1*(normalize(newVel) + vec3(1.0));
-}
+    colors[vIndex].rgb = 0.5*(normalize(newVel) + vec3(1.0));
+    // Set color to blue
+    //colors[vIndex].rgb = vec3(0.0, 0.32, 0.62);
+    // Set color to hash Index
+    //vec3 pos = vec3(newPositions[vIndex]);
+    //colors[vIndex].rgb =  vec3(spacialHash(pos.x, pos.y, pos.z) / float(fluid.mapSize));
+    // Set color to neighbor count
+    //colors[vIndex].rgb = vec3(0.0, vec2(1.0-(float(neighbors[vIndex].count)/500.0)));
+ }
