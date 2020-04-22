@@ -208,7 +208,7 @@ void main() {
     float minDist = 99999.9f;
     float minSDist = 99999.9f;
     for (uint i = 0; i < 4096; i++) {
-        for (uint j = 0; j < 4096 && 4096*i + j < 1104; j++){
+        for (uint j = 0; j < 4096 && 4096*i + j < 15876; j++){
             float dist = distTriangle(triangles[4096*i + j], pos);
             if (abs(dist) < minDist) {
                 minTri = triangles[4096*i + j];

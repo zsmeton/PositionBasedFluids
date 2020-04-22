@@ -144,8 +144,9 @@ float simTime = 0.0;
 
 // Materials
 MaterialSettings matReader;
-const string FLOOR_MATERIAL = "obsidian";
+const string FLOOR_MATERIAL = "chrome";
 const string LIGHT_MATERIAL = "white_light";
+const string OBJECT_MATERIAL = "green_plastic";
 
 // Lighting
 const float LIGHT_SIZE = 6.0f;
@@ -157,8 +158,8 @@ const int SPHERE_STACKS = 10;
 std::vector<int> indices;
 
 // Objects
-const string OBJECT = "models/sphere.obj";
-const float SDF_RESOLUTION = 0.05;
+const string OBJECT = "models/peashooter.obj";
+const float SDF_RESOLUTION = 0.1;
 const float SDF_OFFSET = 1.0;
 
 /// OTHER PARAMS ///
@@ -1113,7 +1114,7 @@ void setupSDFs() {
     modelLoader->setTriangleLocation(sdfSSBOLocs.triangles);
 
     // Calculate SDF
-    modelLoaderMtx = glm::translate(glm::mat4(1.0), glm::vec3(0.0, -4.0, 0.0));
+    modelLoaderMtx = glm::translate(glm::mat4(1.0), glm::vec3(0.0, -2.0, 0.0));
     //modelLoader->calculateSignedDistanceFieldCPU(SDF_RESOLUTION, SDF_OFFSET, modelLoaderMtx);
     modelLoader->calculateSignedDistanceField(sdfProgram, SDF_RESOLUTION, SDF_OFFSET, modelLoaderMtx);
 }
@@ -1566,25 +1567,25 @@ void renderScene(GLFWwindow *window) {
     // Material settings
     glBindBuffer(GL_UNIFORM_BUFFER, materialUniformBuffer.handle);
     glm::vec4 diffuse;
-    diffuse.r = matReader.getSwatch(FLOOR_MATERIAL).diffuse[0];
-    diffuse.g = matReader.getSwatch(FLOOR_MATERIAL).diffuse[1];
-    diffuse.b = matReader.getSwatch(FLOOR_MATERIAL).diffuse[2];
+    diffuse.r = matReader.getSwatch(OBJECT_MATERIAL).diffuse[0];
+    diffuse.g = matReader.getSwatch(OBJECT_MATERIAL).diffuse[1];
+    diffuse.b = matReader.getSwatch(OBJECT_MATERIAL).diffuse[2];
     diffuse.a = 1.0;
 #if SDF_DEBUG
     diffuse.a = 0.4;
 #endif
     glm::vec4 ambient;
-    ambient.r = matReader.getSwatch(FLOOR_MATERIAL).ambient[0];
-    ambient.g = matReader.getSwatch(FLOOR_MATERIAL).ambient[1];
-    ambient.b = matReader.getSwatch(FLOOR_MATERIAL).ambient[2];
+    ambient.r = matReader.getSwatch(OBJECT_MATERIAL).ambient[0];
+    ambient.g = matReader.getSwatch(OBJECT_MATERIAL).ambient[1];
+    ambient.b = matReader.getSwatch(OBJECT_MATERIAL).ambient[2];
     ambient.a = 1.0;
 #if SDF_DEBUG
     ambient.a = 0.4;
 #endif
     glm::vec4 specular;
-    specular.r = matReader.getSwatch(FLOOR_MATERIAL).specular[0];
-    specular.g = matReader.getSwatch(FLOOR_MATERIAL).specular[1];
-    specular.b = matReader.getSwatch(FLOOR_MATERIAL).specular[2];
+    specular.r = matReader.getSwatch(OBJECT_MATERIAL).specular[0];
+    specular.g = matReader.getSwatch(OBJECT_MATERIAL).specular[1];
+    specular.b = matReader.getSwatch(OBJECT_MATERIAL).specular[2];
     specular.a = 1.0;
 #if SDF_DEBUG
     specular.a = 0.4;
@@ -1593,7 +1594,7 @@ void renderScene(GLFWwindow *window) {
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4, &(diffuse)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4, &(specular)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float),
-                    matReader.getSwatch(FLOOR_MATERIAL).shininess);
+                    matReader.getSwatch(OBJECT_MATERIAL).shininess);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[3], sizeof(float) * 4, &(ambient)[0]);
 
     // Matrix settings

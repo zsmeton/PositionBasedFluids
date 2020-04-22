@@ -148,5 +148,6 @@ void main() {
     //vec3 pos = vec3(newPositions[vIndex]);
     //colors[vIndex].rgb =  vec3(spacialHash(pos.x, pos.y, pos.z) / float(fluid.mapSize));
     // Set color to neighbor count
-    colors[vIndex].rgb = vec3(0.0, vec2(1.0-(float(neighbors[vIndex].count)/100.0)));
- }
+    float neighborColor = max(1.0-(float(neighbors[vIndex].count)/100.0), 0.2);
+    colors[vIndex].rgb = vec3(0.0, vec2(neighborColor));
+}
