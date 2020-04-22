@@ -39,6 +39,7 @@ layout(shared, binding = 4) uniform FluidDynamics {
 } fluid;
 
 layout(std430, binding=11) buffer SignedDistanceField {
+    mat4 inverseMtx;
     mat4 transformMtx;
     uint xDim, yDim, zDim;
     SDFCell cells [];

@@ -89,6 +89,7 @@ layout(std430, binding=10) buffer NeighborDataBuf {
 };
 
 layout(std430, binding=11) buffer SignedDistanceField {
+    mat4 inverseMtx;
     mat4 transformMtx;
     uint xDim, yDim, zDim;
     SDFCell cells [];
@@ -223,7 +224,7 @@ void main() {
 
     // Collision detection and response
     dp = confineToBox(newPositions[vIndex].xyz, dp);
-    //dp = collideSDF(newPositions[vIndex].xyz, dp);
+    dp = collideSDF(newPositions[vIndex].xyz, dp);
 
     // Set delta p
     deltaPs[vIndex].xyz = dp;

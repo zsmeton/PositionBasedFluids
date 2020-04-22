@@ -39,7 +39,7 @@
 #include "include/ModelLoaderSDF.hpp"
 
 #define DEBUG 0
-#define SDF 0
+#define SDF 1
 #define SDF_DEBUG 0
 #define WATER 1
 
@@ -157,8 +157,8 @@ const int SPHERE_STACKS = 10;
 std::vector<int> indices;
 
 // Objects
-const string OBJECT = "models/peashooter.obj";
-const float SDF_RESOLUTION = 0.1;
+const string OBJECT = "models/sphere.obj";
+const float SDF_RESOLUTION = 0.05;
 const float SDF_OFFSET = 1.0;
 
 /// OTHER PARAMS ///
@@ -1113,8 +1113,8 @@ void setupSDFs() {
     modelLoader->setTriangleLocation(sdfSSBOLocs.triangles);
 
     // Calculate SDF
-    //modelLoader->calculateSignedDistanceFieldCPU(0.5, 1.0, glm::mat4(1.0));
-    modelLoaderMtx = glm::translate(glm::mat4(1.0), glm::vec3(0.0, -3.1, 0.0));
+    modelLoaderMtx = glm::translate(glm::mat4(1.0), glm::vec3(0.0, -4.1, 0.0));
+    //modelLoader->calculateSignedDistanceFieldCPU(SDF_RESOLUTION, SDF_OFFSET, modelLoaderMtx);
     modelLoader->calculateSignedDistanceField(sdfProgram, SDF_RESOLUTION, SDF_OFFSET, modelLoaderMtx);
 }
 
@@ -1569,17 +1569,17 @@ void renderScene(GLFWwindow *window) {
     diffuse.r = matReader.getSwatch(FLOOR_MATERIAL).diffuse[0];
     diffuse.g = matReader.getSwatch(FLOOR_MATERIAL).diffuse[1];
     diffuse.b = matReader.getSwatch(FLOOR_MATERIAL).diffuse[2];
-    diffuse.a = 0.3;
+    diffuse.a = 0.9;
     glm::vec4 ambient;
     ambient.r = matReader.getSwatch(FLOOR_MATERIAL).ambient[0];
     ambient.g = matReader.getSwatch(FLOOR_MATERIAL).ambient[1];
     ambient.b = matReader.getSwatch(FLOOR_MATERIAL).ambient[2];
-    ambient.a = 0.3;
+    ambient.a = 0.9;
     glm::vec4 specular;
     specular.r = matReader.getSwatch(FLOOR_MATERIAL).specular[0];
     specular.g = matReader.getSwatch(FLOOR_MATERIAL).specular[1];
     specular.b = matReader.getSwatch(FLOOR_MATERIAL).specular[2];
-    specular.a = 0.3;
+    specular.a = 0.9;
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[0], sizeof(float) * 4, &(diffuse)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[1], sizeof(float) * 4, &(specular)[0]);
     glBufferSubData(GL_UNIFORM_BUFFER, materialUniformBuffer.offsets[2], sizeof(float),

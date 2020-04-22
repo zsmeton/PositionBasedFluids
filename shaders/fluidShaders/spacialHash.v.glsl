@@ -90,6 +90,7 @@ layout(std430, binding=9) buffer LinkedListBuf {
 };
 
 layout(std430, binding=11) buffer SignedDistanceField {
+    mat4 inverseMtx;
     mat4 transformMtx;
     uint xDim, yDim, zDim;
     SDFCell cells [];
@@ -183,7 +184,7 @@ void main() {
     vec3 _vel = vec3(vVel) + fluid.dt *  vec3(0.0, -9.8, 0.0);
     vec3 _pos = vec3(vPos) + fluid.dt * _vel;// Set additional variable for memory access optimization
     _pos += confineToBox(_pos, vec3(0.0));
-    //_pos += collideSDF(_pos, vec3(0.0));
+    _pos += collideSDF(_pos, vec3(0.0));
     newPositions[vIndex].xyz = _pos;
     velocities[vIndex].xyz = (_pos-vec3(vPos)) / fluid.dt;
 

@@ -21,10 +21,9 @@ struct BoundingBox {
 
 // ***** COMPUTE SHADER BUFFERS *****
 layout(std430, binding=11) buffer SignedDistanceField {
+    mat4 inverseMtx;
     mat4 transformMtx;
-    uint xDim;
-    uint yDim;
-    uint zDim;
+    uint xDim, yDim, zDim;
     SDFCell cells [];
 };
 
@@ -168,8 +167,25 @@ float distTriangle(Triangle triangle, vec3 point){
     float dist = dot(pt, pt);
     // Get sign
     float sign = sign(dot(vec3(triangle.normal), pt));
-    sign = (-0.1 <= sign && sign <= 0.1) ? -1.0 : sign;
     return sign * dist;
+}
+
+mat4 scale(float x, float y, float z){
+    return mat4(
+    vec4(x, 0.0, 0.0, 0.0),
+    vec4(0.0, y, 0.0, 0.0),
+    vec4(0.0, 0.0, z, 0.0),
+    vec4(0.0, 0.0, 0.0, 1.0)
+    );
+}
+
+mat4 translate(float x, float y, float z){
+    return mat4(
+    vec4(1.0, 0.0, 0.0, 0.0),
+    vec4(0.0, 1.0, 0.0, 0.0),
+    vec4(0.0, 0.0, 1.0, 0.0),
+    vec4(x, y, z, 1.0)
+    );
 }
 
 void main() {
@@ -183,19 +199,16 @@ void main() {
     cells[cellIndex].distance = 0.0;
     cells[cellIndex].normal = vec4(0.0);
 
-    // Calculate inverse of the transformation mtx
-    mat4 inverseTransformMtx = inverse(transformMtx);
-
     // Calculate world position
-    vec3 pos = vec3(inverseTransformMtx * vec4(xIndex, yIndex, zIndex, 1.0));
+    vec3 pos = vec3(inverseMtx * vec4(xIndex, yIndex, zIndex, 1.0));
 
     // Find nearest triangle
     Triangle minTri;
     minTri.normal = vec4(0.0);
     float minDist = 99999.9f;
-    float minSDist = 99999.0f;
-    for (int i = 0; i < 4096; i++) {
-        for (int j = 0; j < 4096 && 4096*i + j < 15876; j++){
+    float minSDist = 99999.9f;
+    for (uint i = 0; i < 4096; i++) {
+        for (uint j = 0; j < 4096 && 4096*i + j < 1104; j++){
             float dist = distTriangle(triangles[4096*i + j], pos);
             if (abs(dist) < minDist) {
                 minTri = triangles[4096*i + j];
