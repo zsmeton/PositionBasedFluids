@@ -2,14 +2,7 @@
 ### AUTHOR: 
 Zachary Smeton
 ### DESCRIPTION:
-todo
+Final project for Advanced Computer Graphics which utilizes OpenGL for rendering and GPGPU computations for fluid positions. The work is based on the paper “Position Based Fluids”, M. Macklin and M. Muller. I also implemented signed distance field collision detection for O(1) collision resolution with complex objects like the Plants V.S. Zombies pea shooter. This also used a compute shader to rapidly compute the hashed signed distance field texture.
 
-### TODOS
-- Create various fluid scenarios (Some configuration files possibly...)
-- Add sorting of Linked List by HashID for faster memory access
-- Implement coloring of spheres to look more like water
-    - foaming
-    - some transparency
-
-#### NITTY GRITTY TODOS
-- Create struct to store block binding locations
+![wave_sphere.png](wave_sphere.png)
+![funnel_pea.png](funnel_pea.png)
